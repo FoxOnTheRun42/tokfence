@@ -13,6 +13,7 @@ Tokfence is a local-first daemon and CLI that sits between AI tools and upstream
 - Budget enforcement (`daily`/`monthly`) with HTTP 429 responses.
 - Provider revocation and global `kill` / `unkill`.
 - Per-provider RPM rate limiting.
+- Native-looking macOS menu UI via SwiftBar widget integration.
 
 ## Quickstart
 
@@ -78,6 +79,32 @@ tokfence ratelimit clear <provider>
 
 # Shell integration
 tokfence env [--shell bash|zsh|fish] [--provider <provider>]
+
+# Desktop widget (SwiftBar)
+tokfence widget install [--refresh 20]
+tokfence widget render
+tokfence widget uninstall
+```
+
+## macOS Desktop UI (SwiftBar)
+
+Install [SwiftBar](https://swiftbar.app/), then install the Tokfence widget:
+
+```bash
+tokfence widget install --refresh 20
+```
+
+The widget shows:
+- daemon status (online/offline)
+- today's requests, token totals, and estimated cost
+- budget usage progress bars
+- revoked providers and vault coverage
+- one-click actions (`start`, `stop`, `kill`, `unkill`, logs, stats)
+
+If your binary is not in `PATH`, pass it explicitly:
+
+```bash
+tokfence widget install --binary /absolute/path/to/tokfence
 ```
 
 ## Config

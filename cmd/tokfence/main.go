@@ -51,6 +51,7 @@ func main() {
 	rootCmd.AddCommand(newKillCommand())
 	rootCmd.AddCommand(newUnkillCommand())
 	rootCmd.AddCommand(newEnvCommand())
+	rootCmd.AddCommand(newWidgetCommand())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -873,6 +874,374 @@ func newEnvCommand() *cobra.Command {
 	cmd.Flags().StringVar(&shell, "shell", "zsh", "shell format: bash, zsh, fish")
 	cmd.Flags().StringVar(&provider, "provider", "", "single provider")
 	return cmd
+}
+
+func newWidgetCommand() *cobra.Command {
+	widgetCmd := &cobra.Command{
+		Use:   "widget",
+		Short: "Desktop UI integration for SwiftBar",
+	}
+
+	var pluginDir string
+	var binaryPath string
+	var refreshSeconds int
+	installCmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install the Tokfence SwiftBar plugin",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if refreshSeconds < 5 {
+				return errors.New("refresh must be >= 5 seconds")
+			}
+			if pluginDir == "" {
+				pluginDir = "~/Library/Application Support/SwiftBar/Plugins"
+			}
+			dir, err := config.ExpandPath(pluginDir)
+			if err != nil {
+				return fmt.Errorf("expand plugin directory: %w", err)
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("create plugin directory: %w", err)
+			}
+
+			if binaryPath == "" {
+				binaryPath, err = os.Executable()
+				if err != nil {
+					return fmt.Errorf("resolve tokfence binary path: %w", err)
+				}
+			}
+			binaryPath, err = filepath.Abs(binaryPath)
+			if err != nil {
+				return fmt.Errorf("resolve absolute binary path: %w", err)
+			}
+
+			expandedConfigPath := configPath
+			if strings.TrimSpace(expandedConfigPath) != "" {
+				expandedConfigPath, err = config.ExpandPath(expandedConfigPath)
+				if err != nil {
+					return fmt.Errorf("expand config path: %w", err)
+				}
+			}
+
+			pluginPath := filepath.Join(dir, fmt.Sprintf("tokfence.%ds.sh", refreshSeconds))
+			script := buildSwiftBarPluginScript(binaryPath, expandedConfigPath)
+			if err := os.WriteFile(pluginPath, []byte(script), 0o755); err != nil {
+				return fmt.Errorf("write SwiftBar plugin: %w", err)
+			}
+			if err := os.Chmod(pluginPath, 0o755); err != nil {
+				return fmt.Errorf("set plugin executable bit: %w", err)
+			}
+
+			if outputJSON {
+				return printJSON(map[string]any{
+					"status":      "installed",
+					"plugin_path": pluginPath,
+					"refresh_sec": refreshSeconds,
+					"binary_path": binaryPath,
+				})
+			}
+
+			fmt.Printf("SwiftBar plugin installed:\n%s\n\n", pluginPath)
+			fmt.Println("Next steps:")
+			fmt.Println("1. Open SwiftBar (or click Refresh All in SwiftBar).")
+			fmt.Println("2. Add Tokfence to your menu bar from the plugin list.")
+			fmt.Println("3. Use the Tokfence menu actions directly from the menubar UI.")
+			return nil
+		},
+	}
+	installCmd.Flags().StringVar(&pluginDir, "plugins-dir", "", "SwiftBar plugin directory")
+	installCmd.Flags().StringVar(&binaryPath, "binary", "", "path to tokfence binary")
+	installCmd.Flags().IntVar(&refreshSeconds, "refresh", 20, "widget refresh interval in seconds")
+
+	var uninstallDir string
+	uninstallCmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove Tokfence SwiftBar plugin files",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if uninstallDir == "" {
+				uninstallDir = "~/Library/Application Support/SwiftBar/Plugins"
+			}
+			dir, err := config.ExpandPath(uninstallDir)
+			if err != nil {
+				return fmt.Errorf("expand plugin directory: %w", err)
+			}
+			patterns := []string{
+				filepath.Join(dir, "tokfence.*.sh"),
+				filepath.Join(dir, "tokfence.sh"),
+			}
+			removed := 0
+			for _, pattern := range patterns {
+				matches, _ := filepath.Glob(pattern)
+				for _, match := range matches {
+					if err := os.Remove(match); err == nil {
+						removed++
+					}
+				}
+			}
+			if outputJSON {
+				return printJSON(map[string]any{"status": "uninstalled", "removed_files": removed, "plugin_dir": dir})
+			}
+			fmt.Printf("Removed %d Tokfence SwiftBar plugin file(s) from %s\n", removed, dir)
+			return nil
+		},
+	}
+	uninstallCmd.Flags().StringVar(&uninstallDir, "plugins-dir", "", "SwiftBar plugin directory")
+
+	renderCmd := &cobra.Command{
+		Use:   "render",
+		Short: "Render SwiftBar widget output",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			snapshot := collectWidgetSnapshot(context.Background())
+			if outputJSON {
+				return printJSON(snapshot)
+			}
+			renderSwiftBarWidget(snapshot)
+			return nil
+		},
+	}
+
+	widgetCmd.AddCommand(installCmd)
+	widgetCmd.AddCommand(uninstallCmd)
+	widgetCmd.AddCommand(renderCmd)
+	return widgetCmd
+}
+
+func buildSwiftBarPluginScript(binaryPath, cfgPath string) string {
+	commandParts := []string{shellQuote(binaryPath), "widget", "render"}
+	if strings.TrimSpace(cfgPath) != "" {
+		commandParts = append(commandParts, "--config", shellQuote(cfgPath))
+	}
+	command := strings.Join(commandParts, " ")
+	return "#!/usr/bin/env bash\nset -euo pipefail\n\nif ! " + command + "; then\n  echo \"🛡️ Tokfence • error | color=#ef4444\"\n  echo \"---\"\n  echo \"Widget render failed\"\nfi\n"
+}
+
+func shellQuote(raw string) string {
+	return "'" + strings.ReplaceAll(raw, "'", `'"'"'`) + "'"
+}
+
+type widgetSnapshot struct {
+	GeneratedAt       time.Time       `json:"generated_at"`
+	Running           bool            `json:"running"`
+	PID               int             `json:"pid,omitempty"`
+	Addr              string          `json:"addr,omitempty"`
+	TodayRequests     int             `json:"today_requests"`
+	TodayInputTokens  int64           `json:"today_input_tokens"`
+	TodayOutputTokens int64           `json:"today_output_tokens"`
+	TodayCostCents    int64           `json:"today_cost_cents"`
+	TopProvider       string          `json:"top_provider,omitempty"`
+	TopProviderCents  int64           `json:"top_provider_cost_cents,omitempty"`
+	Budgets           []budget.Budget `json:"budgets"`
+	RevokedProviders  []string        `json:"revoked_providers"`
+	VaultProviders    []string        `json:"vault_providers"`
+	LastRequestAt     string          `json:"last_request_at,omitempty"`
+	Warnings          []string        `json:"warnings,omitempty"`
+}
+
+func collectWidgetSnapshot(ctx context.Context) widgetSnapshot {
+	snapshot := widgetSnapshot{
+		GeneratedAt:      time.Now().UTC(),
+		Budgets:          []budget.Budget{},
+		RevokedProviders: []string{},
+		VaultProviders:   []string{},
+		Warnings:         []string{},
+	}
+
+	if state, err := readPIDFile(); err == nil {
+		snapshot.Running = processAlive(state.PID)
+		snapshot.PID = state.PID
+		snapshot.Addr = state.Addr
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "config: "+err.Error())
+		return snapshot
+	}
+
+	store, err := logger.Open(cfg.Logging.DBPath)
+	if err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "db: "+err.Error())
+	} else {
+		defer store.Close()
+
+		now := time.Now().In(time.Local)
+		todayStartLocal := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+		rows, statsErr := store.Stats(ctx, logger.StatsFilter{Since: todayStartLocal.UTC(), By: "provider"})
+		if statsErr != nil {
+			snapshot.Warnings = append(snapshot.Warnings, "stats: "+statsErr.Error())
+		} else {
+			for _, row := range rows {
+				snapshot.TodayRequests += row.RequestCount
+				snapshot.TodayInputTokens += row.InputTokens
+				snapshot.TodayOutputTokens += row.OutputTokens
+				snapshot.TodayCostCents += row.EstimatedCostCents
+				if row.EstimatedCostCents > snapshot.TopProviderCents {
+					snapshot.TopProvider = row.Group
+					snapshot.TopProviderCents = row.EstimatedCostCents
+				}
+			}
+		}
+
+		last, lastErr := store.ListRequests(ctx, logger.QueryFilter{Limit: 1})
+		if lastErr != nil {
+			snapshot.Warnings = append(snapshot.Warnings, "last-request: "+lastErr.Error())
+		} else if len(last) > 0 {
+			snapshot.LastRequestAt = last[0].Timestamp.In(time.Local).Format("15:04:05")
+		}
+
+		engine := budget.NewEngine(store.DB())
+		budgets, budgetErr := engine.Status(ctx)
+		if budgetErr != nil {
+			snapshot.Warnings = append(snapshot.Warnings, "budgets: "+budgetErr.Error())
+		} else {
+			snapshot.Budgets = budgets
+		}
+
+		providers := make([]string, 0, len(cfg.Providers))
+		for provider := range cfg.Providers {
+			providers = append(providers, provider)
+		}
+		sort.Strings(providers)
+		for _, provider := range providers {
+			revoked, revokedErr := store.IsProviderRevoked(ctx, provider)
+			if revokedErr != nil {
+				snapshot.Warnings = append(snapshot.Warnings, fmt.Sprintf("provider-status %s: %v", provider, revokedErr))
+				continue
+			}
+			if revoked {
+				snapshot.RevokedProviders = append(snapshot.RevokedProviders, provider)
+			}
+		}
+	}
+
+	v, err := vault.NewDefault(vault.Options{})
+	if err != nil {
+		snapshot.Warnings = append(snapshot.Warnings, "vault: "+err.Error())
+	} else {
+		providers, listErr := v.List(ctx)
+		if listErr != nil {
+			snapshot.Warnings = append(snapshot.Warnings, "vault-list: "+listErr.Error())
+		} else {
+			snapshot.VaultProviders = providers
+		}
+	}
+
+	return snapshot
+}
+
+func renderSwiftBarWidget(snapshot widgetSnapshot) {
+	if snapshot.Running {
+		fmt.Printf("🛡️ Tokfence %s · %d req | color=#16a34a\n", formatUSD(snapshot.TodayCostCents), snapshot.TodayRequests)
+	} else {
+		fmt.Println("🛡️ Tokfence offline | color=#ef4444")
+	}
+	fmt.Println("---")
+	fmt.Println("Tokfence Dashboard | color=#6b7280 size=12")
+	if snapshot.Running {
+		fmt.Printf("Status: Running ✅ (PID %d)\n", snapshot.PID)
+		if snapshot.Addr != "" {
+			fmt.Printf("Address: http://%s\n", snapshot.Addr)
+		}
+	} else {
+		fmt.Println("Status: Offline")
+	}
+	if snapshot.LastRequestAt != "" {
+		fmt.Printf("Last Request: %s\n", snapshot.LastRequestAt)
+	}
+	fmt.Println("---")
+	fmt.Println("Today | color=#6b7280")
+	fmt.Printf("Requests: %d\n", snapshot.TodayRequests)
+	fmt.Printf("Cost: %s\n", formatUSD(snapshot.TodayCostCents))
+	fmt.Printf("Input Tokens: %s\n", formatTokenCount(snapshot.TodayInputTokens))
+	fmt.Printf("Output Tokens: %s\n", formatTokenCount(snapshot.TodayOutputTokens))
+	if snapshot.TopProvider != "" {
+		fmt.Printf("Top Provider: %s (%s)\n", snapshot.TopProvider, formatUSD(snapshot.TopProviderCents))
+	}
+
+	fmt.Println("---")
+	fmt.Println("Budgets | color=#6b7280")
+	if len(snapshot.Budgets) == 0 {
+		fmt.Println("No budgets configured")
+	} else {
+		for _, b := range snapshot.Budgets {
+			pct := 0.0
+			if b.LimitCents > 0 {
+				pct = (float64(b.CurrentSpendCents) / float64(b.LimitCents)) * 100.0
+			}
+			fmt.Printf("%s: %s / %s (%0.0f%%) %s\n", b.Provider, formatUSD(b.CurrentSpendCents), formatUSD(b.LimitCents), pct, progressBar(pct))
+		}
+	}
+
+	fmt.Println("---")
+	fmt.Println("Access | color=#6b7280")
+	fmt.Printf("Vault Keys: %d provider(s)\n", len(snapshot.VaultProviders))
+	if len(snapshot.RevokedProviders) == 0 {
+		fmt.Println("Revoked: none")
+	} else {
+		fmt.Printf("Revoked: %s\n", strings.Join(snapshot.RevokedProviders, ", "))
+	}
+
+	if len(snapshot.Warnings) > 0 {
+		fmt.Println("---")
+		fmt.Println("Warnings | color=#f59e0b")
+		for _, warning := range snapshot.Warnings {
+			fmt.Printf("%s\n", warning)
+		}
+	}
+
+	fmt.Println("---")
+	fmt.Println("Actions | color=#6b7280")
+	exe := "tokfence"
+	if resolved, err := os.Executable(); err == nil {
+		exe = resolved
+	}
+	printSwiftBarAction("Start Daemon", exe, []string{"start", "-d"}, false, true)
+	printSwiftBarAction("Stop Daemon", exe, []string{"stop"}, false, true)
+	printSwiftBarAction("Kill All Providers", exe, []string{"kill"}, false, true)
+	printSwiftBarAction("Restore All Providers", exe, []string{"unkill"}, false, true)
+	printSwiftBarAction("Open Live Logs", exe, []string{"log", "-f"}, true, false)
+	printSwiftBarAction("Open Stats", exe, []string{"stats", "--period", "today", "--by", "provider"}, true, false)
+	printSwiftBarAction("Open Tokfence Data Folder", "open", []string{mustDataDir()}, false, false)
+	printSwiftBarAction("Refresh", "echo", []string{"refresh"}, false, true)
+}
+
+func printSwiftBarAction(label, bash string, args []string, terminal bool, refresh bool) {
+	fmt.Printf("%s | bash=%q", label, bash)
+	for i, arg := range args {
+		fmt.Printf(" param%d=%q", i+1, arg)
+	}
+	fmt.Printf(" terminal=%t refresh=%t\n", terminal, refresh)
+}
+
+func formatUSD(cents int64) string {
+	return fmt.Sprintf("$%.2f", float64(cents)/100.0)
+}
+
+func formatTokenCount(tokens int64) string {
+	switch {
+	case tokens >= 1_000_000:
+		return fmt.Sprintf("%.2fM", float64(tokens)/1_000_000.0)
+	case tokens >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(tokens)/1_000.0)
+	default:
+		return fmt.Sprintf("%d", tokens)
+	}
+}
+
+func progressBar(pct float64) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int((pct + 9.99) / 10.0)
+	if filled > 10 {
+		filled = 10
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", 10-filled)
 }
 
 type daemonState struct {
