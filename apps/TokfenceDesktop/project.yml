@@ -1,0 +1,40 @@
+name: TokfenceDesktop
+options:
+  minimumXcodeGenVersion: 2.44.0
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+configs:
+  Debug: debug
+  Release: release
+targets:
+  TokfenceDesktop:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: App
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foxontherun42.tokfence.desktop
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/TokfenceDesktop.entitlements
+    dependencies:
+      - target: TokfenceWidgetExtension
+        embed: true
+  TokfenceWidgetExtension:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Widget
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.foxontherun42.tokfence.desktop.widget
+        INFOPLIST_FILE: Widget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Widget/TokfenceWidgetExtension.entitlements
+        PRODUCT_NAME: TokfenceWidgetExtension

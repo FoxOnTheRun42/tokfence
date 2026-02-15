@@ -107,6 +107,34 @@ If your binary is not in `PATH`, pass it explicitly:
 tokfence widget install --binary /absolute/path/to/tokfence
 ```
 
+## Native macOS App + Widget (SwiftUI + WidgetKit)
+
+This repository now includes a native desktop app and widget project at:
+`apps/TokfenceDesktop`
+
+It provides:
+- a full SwiftUI dashboard app
+- a WidgetKit extension for macOS widgets
+- shared snapshot data loaded from `~/.tokfence/desktop_snapshot.json`
+
+Generate and build:
+
+```bash
+make desktop-generate
+make desktop-build
+```
+
+Then open:
+
+```bash
+open apps/TokfenceDesktop/TokfenceDesktop.xcodeproj
+```
+
+In the app:
+1. Set the Tokfence binary path if needed.
+2. Click `Refresh` to pull live status from `tokfence widget render --json`.
+3. Add the Tokfence widget from macOS widget gallery.
+
 ## Config
 
 Default config path: `~/.tokfence/config.toml`
