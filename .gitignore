@@ -2,3 +2,9 @@
 /bin/
 *.log
 *.pid
+
+# Private prompt material
+.private/
+AGENTS.md
+BOOTSTRAP_PROMPT.md
+FOLLOW_UP_PROMPTS.md
