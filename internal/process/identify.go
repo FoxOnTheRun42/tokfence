@@ -31,9 +31,6 @@ func Identify(_ context.Context, r *http.Request) ProcessIdentity {
 	if v := strings.TrimSpace(r.Header.Get("X-Tokfence-Agent")); v != "" {
 		return ProcessIdentity{Name: v, Source: "header-x-tokfence-agent", Confidence: 1.0}
 	}
-	if v := strings.TrimSpace(r.Header.Get("X-Glassbox-Agent")); v != "" {
-		return ProcessIdentity{Name: v, Source: "header-x-glassbox-agent", Confidence: 1.0}
-	}
 
 	_, port, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil || port == "" {

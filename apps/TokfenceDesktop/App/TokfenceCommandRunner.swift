@@ -353,7 +353,7 @@ struct TokfenceCommandRunner {
 
     private func resolveDefaultBinaryPath() -> String {
         let preferred = [
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/tmp/glasbox/glasbox/bin/tokfence",
+            "\(FileManager.default.homeDirectoryForCurrentUser.path)/bin/tokfence",
             "/opt/homebrew/bin/tokfence",
             "/usr/local/bin/tokfence"
         ]

@@ -6,7 +6,7 @@ Tokfence is a local-first daemon and CLI that sits between AI tools and upstream
 
 ![Tokfence Dashboard](docs/launch/screenshot_dashboard.png)
 
-Launch assets (screenshots + E2E capture): `docs/launch/`
+Launch assets + E2E capture: `docs/launch/`
 
 ## Features
 
@@ -180,9 +180,9 @@ In the app:
 2. Click `Refresh` to pull live status from `tokfence widget render --json`.
 3. Add the Tokfence widget from macOS widget gallery.
 
-## Desktop Screenshots
+## Desktop Preview
 
-Current launch screenshots are versioned in `docs/launch/`:
+Current launch visuals are versioned in `docs/launch/`:
 
 | Dashboard | Vault |
 | --- | --- |
