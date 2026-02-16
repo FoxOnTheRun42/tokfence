@@ -1,0 +1,128 @@
+# Tokfence Live E2E Capture
+# Generated: 2026-02-16T17:01:22Z
+
+$ tokfence status --json
+{
+  "addr": "127.0.0.1:9471",
+  "managed": false,
+  "running": true,
+  "source": "port_probe"
+}
+
+$ curl -sS -N --max-time 60 http://127.0.0.1:9471/openai/v1/chat/completions ... stream:true
+data: {"id":"chatcmpl-D9wGKYVgQzkBjclA1o07sYTv4KZPj","object":"chat.completion.chunk","created":1771261284,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"obfuscation":"GMxnJc"}
+
+data: {"id":"chatcmpl-D9wGKYVgQzkBjclA1o07sYTv4KZPj","object":"chat.completion.chunk","created":1771261284,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":"OK"},"logprobs":null,"finish_reason":null}],"obfuscation":"JkAhGN"}
+
+data: {"id":"chatcmpl-D9wGKYVgQzkBjclA1o07sYTv4KZPj","object":"chat.completion.chunk","created":1771261284,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"obfuscation":"QO"}
+
+data: [DONE]
+
+
+$ tokfence log --json --provider openai --since 20m
+[
+  {
+    "ID": "01KHKPCMM0M4YAV22QC29RNWS9",
+    "Timestamp": "2026-02-16T17:01:24Z",
+    "Provider": "openai",
+    "Model": "gpt-4o-mini",
+    "Endpoint": "/v1/chat/completions",
+    "Method": "POST",
+    "InputTokens": 0,
+    "OutputTokens": 0,
+    "CacheReadTokens": 0,
+    "CacheCreationTokens": 0,
+    "EstimatedCostCents": 0,
+    "StatusCode": 200,
+    "LatencyMS": 1476,
+    "TTFTMS": 1461,
+    "CallerPID": 78422,
+    "CallerName": "curl",
+    "IsStreaming": true,
+    "ErrorType": "",
+    "ErrorMessage": "",
+    "RequestHash": "79dd2e6c3a9abd80"
+  }
+]
+
+$ tokfence stats --json --period 24h
+[
+  {
+    "Group": "openai",
+    "RequestCount": 3,
+    "InputTokens": 13,
+    "OutputTokens": 6,
+    "EstimatedCostCents": 0
+  },
+  {
+    "Group": "anthropic",
+    "RequestCount": 1,
+    "InputTokens": 0,
+    "OutputTokens": 0,
+    "EstimatedCostCents": 0
+  }
+]
+
+$ curl -sS -N --max-time 60 http://127.0.0.1:9471/openai/v1/chat/completions ... stream:true + include_usage
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"R3kb56R5O"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":"One"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"plsCeKdI"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"kLxLMPHQ6z"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":" two"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"FSQ9HJW"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":","},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"QwkG4m2c8s"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":" three"},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"HAgde"}
+
+data: {"id":"chatcmpl-D9wGZLQ0vHrHeRWMuETzfBdOlC6gc","object":"chat.completion.chunk","created":1771261299,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_373a14eb6f","choices":[{"index":0,"delta":{"content":"."},"logprobs":null,"finish_reason":null}],"usage":null,"obfuscation":"WZxaz4f1Dr"}
+
+
+$ tokfence log --json --provider openai --since 5m
+[
+  {
+    "ID": "01KHKPD3KBYYFJJJPFX6KK87F4",
+    "Timestamp": "2026-02-16T17:01:40Z",
+    "Provider": "openai",
+    "Model": "gpt-4o-mini",
+    "Endpoint": "/v1/chat/completions",
+    "Method": "POST",
+    "InputTokens": 13,
+    "OutputTokens": 6,
+    "CacheReadTokens": 0,
+    "CacheCreationTokens": 0,
+    "EstimatedCostCents": 0,
+    "StatusCode": 200,
+    "LatencyMS": 1244,
+    "TTFTMS": 1101,
+    "CallerPID": 78422,
+    "CallerName": "curl",
+    "IsStreaming": true,
+    "ErrorType": "",
+    "ErrorMessage": "",
+    "RequestHash": "3870ffe7dc565ce5"
+  },
+  {
+    "ID": "01KHKPCMM0M4YAV22QC29RNWS9",
+    "Timestamp": "2026-02-16T17:01:24Z",
+    "Provider": "openai",
+    "Model": "gpt-4o-mini",
+    "Endpoint": "/v1/chat/completions",
+    "Method": "POST",
+    "InputTokens": 0,
+    "OutputTokens": 0,
+    "CacheReadTokens": 0,
+    "CacheCreationTokens": 0,
+    "EstimatedCostCents": 0,
+    "StatusCode": 200,
+    "LatencyMS": 1476,
+    "TTFTMS": 1461,
+    "CallerPID": 78422,
+    "CallerName": "curl",
+    "IsStreaming": true,
+    "ErrorType": "",
+    "ErrorMessage": "",
+    "RequestHash": "79dd2e6c3a9abd80"
+  }
+]

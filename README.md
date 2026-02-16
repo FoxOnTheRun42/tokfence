@@ -4,6 +4,10 @@ One place for all your AI keys with full control over every token your agents bu
 
 Tokfence is a local-first daemon and CLI that sits between AI tools and upstream model APIs. It injects credentials, logs request metadata, estimates cost, enforces budgets, supports provider kill-switches, and exposes shell-ready base URL exports.
 
+![Tokfence Dashboard](docs/launch/screenshot_dashboard.png)
+
+Launch assets (screenshots + E2E capture): `docs/launch/`
+
 ## Features
 
 - Local proxy on `127.0.0.1:9471` with provider path routing.
@@ -178,19 +182,17 @@ In the app:
 
 ## Desktop Screenshots
 
-Current UI screenshots are versioned in `docs/screenshots/`:
+Current launch screenshots are versioned in `docs/launch/`:
 
 | Dashboard | Vault |
 | --- | --- |
-| ![Tokfence Dashboard](docs/screenshots/dashboard.png) | ![Tokfence Vault](docs/screenshots/vault.png) |
+| ![Tokfence Dashboard](docs/launch/screenshot_dashboard.png) | ![Tokfence Vault](docs/launch/screenshot_vault.png) |
 
-| Logs | Budget |
+| Providers | Kill Switch |
 | --- | --- |
-| ![Tokfence Logs](docs/screenshots/logs.png) | ![Tokfence Budget](docs/screenshots/budget.png) |
+| ![Tokfence Providers](docs/launch/screenshot_providers.png) | ![Tokfence Kill Switch](docs/launch/screenshot_killswitch.png) |
 
-| Providers | Settings |
-| --- | --- |
-| ![Tokfence Providers](docs/screenshots/providers.png) | ![Tokfence Settings](docs/screenshots/settings.png) |
+Live E2E terminal capture: [`docs/launch/e2e_output.txt`](docs/launch/e2e_output.txt)
 
 ## Config
 
