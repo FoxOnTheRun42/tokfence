@@ -163,3 +163,41 @@ make test
 ```
 
 No external API calls are used in tests.
+
+## Ship Verification (Live E2E)
+
+Run a real end-to-end check with an actual provider key (never commit secrets):
+
+```bash
+export TOKFENCE_OPENAI_KEY='sk-...'
+make smoke-e2e-openai
+```
+
+or for Anthropic:
+
+```bash
+export TOKFENCE_ANTHROPIC_KEY='sk-ant-...'
+make smoke-e2e-anthropic
+```
+
+The smoke test does:
+
+- builds tokfence binary (if needed)
+- starts daemon on `127.0.0.1:9471` in background (if not running)
+- stores the provider key in vault via `vault add <provider> -`
+- sends one real streaming request through tokfence
+- validates first SSE chunk arrives
+- validates request is logged (streaming flag + status) and `stats` returns provider rows
+- validates `tokfence widget render --json` returns a valid live snapshot
+
+Expected output:
+
+```
+tokfence live smoke passed (provider=...)
+```
+
+Environment variables supported by `scripts/live-e2e.sh`:
+
+- `TOKFENCE_BINARY` (default `./bin/tokfence`)
+- `TOKFENCE_SMOKE_KEEP_DAEMON` (set `1` to keep daemon running after the run)
+- `TOKFENCE_SMOKE_BUILD` (set `1` to rebuild binary every run)

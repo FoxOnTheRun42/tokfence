@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -88,6 +89,90 @@ func TestHandleProxyForwardsInjectsAuthAndLogs(t *testing.T) {
 	}
 	if rows[0].EstimatedCostCents == 0 {
 		t.Fatalf("expected non-zero cost")
+	}
+}
+
+func TestHandleProxyRejectsOversizedBody(t *testing.T) {
+	originalLimit := os.Getenv("TOKFENCE_MAX_REQUEST_BODY_BYTES")
+	_ = os.Setenv("TOKFENCE_MAX_REQUEST_BODY_BYTES", "64")
+	defer func() {
+		_ = os.Setenv("TOKFENCE_MAX_REQUEST_BODY_BYTES", originalLimit)
+	}()
+
+	srv, _, cleanup := newTestServer(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	defer cleanup()
+
+	large := strings.Repeat("a", 128)
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(large))
+	rec := httptest.NewRecorder()
+
+	srv.handleProxy(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("payload parse: %v", err)
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error payload, got %T", payload["error"])
+	}
+	if got := errObj["type"]; got != "tokfence_request_too_large" {
+		t.Fatalf("error.type = %v, want tokfence_request_too_large", got)
+	}
+	requestIDHeader := rec.Header().Get("X-Tokfence-Request-ID")
+	if requestIDHeader == "" {
+		t.Fatal("expected request id header")
+	}
+	if errObj["request_id"] != requestIDHeader {
+		t.Fatalf("error request_id = %v, want %q", errObj["request_id"], requestIDHeader)
+	}
+}
+
+func TestHandleProxyStripsCommonAuthHeaders(t *testing.T) {
+	var gotAuth string
+	var gotProxyAuth string
+	var gotGoog string
+	var gotCustom string
+
+	srv, _, cleanup := newTestServer(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotProxyAuth = r.Header.Get("Proxy-Authorization")
+		gotGoog = r.Header.Get("x-goog-api-key")
+		gotCustom = r.Header.Get("X-Custom-Auth")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1"}`))
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","stream":false}`))
+	req.Header.Set("Authorization", "Bearer from-agent")
+	req.Header.Set("Proxy-Authorization", "Bearer outer")
+	req.Header.Set("X-Api-Key", "x")
+	req.Header.Set("X-Custom-Auth", "contains bearer token")
+	req.Header.Set("x-goog-api-key", "google")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	srv.handleProxy(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if gotAuth != "Bearer sk-test" {
+		t.Fatalf("upstream Authorization = %q, want Bearer sk-test", gotAuth)
+	}
+	if gotProxyAuth != "" {
+		t.Fatalf("upstream Proxy-Authorization should be stripped")
+	}
+	if gotGoog != "" {
+		t.Fatalf("upstream x-goog-api-key should be stripped")
+	}
+	if gotCustom != "" {
+		t.Fatalf("upstream X-Custom-Auth with bearer value should be stripped")
 	}
 }
 

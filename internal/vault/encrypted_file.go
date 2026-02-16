@@ -19,6 +19,16 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
+const (
+	vaultSaltBytes  = 16
+	vaultNonceBytes = 12
+
+	argonTimeCost    = 3
+	argonMemoryCost  = 196608
+	argonParallelism = 4
+	argonKeyLength   = 32
+)
+
 type encryptedPayload struct {
 	Salt       string `json:"salt"`
 	Nonce      string `json:"nonce"`
@@ -127,6 +137,27 @@ func (v *EncryptedFileVault) List(_ context.Context) ([]string, error) {
 	return providers, nil
 }
 
+func (v *EncryptedFileVault) ReEncrypt(_ context.Context, newPassphrase string) error {
+	passphrase := strings.TrimSpace(newPassphrase)
+	if passphrase == "" {
+		return errors.New("passphrase cannot be empty")
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	state, err := v.loadUnlocked()
+	if err != nil {
+		return err
+	}
+	oldPass := v.passphrase
+	v.passphrase = []byte(passphrase)
+	if err := v.saveUnlocked(state); err != nil {
+		v.passphrase = oldPass
+		return err
+	}
+	zeroize(oldPass)
+	return nil
+}
+
 func (v *EncryptedFileVault) loadUnlocked() (plainVault, error) {
 	if _, err := os.Stat(v.filePath); err != nil {
 		if os.IsNotExist(err) {
@@ -157,10 +188,12 @@ func (v *EncryptedFileVault) loadUnlocked() (plainVault, error) {
 	if err != nil {
 		return plainVault{}, fmt.Errorf("decode ciphertext: %w", err)
 	}
-	plain, err := decrypt(v.passphrase, salt, nonce, cipherText)
+	plain, err := decrypt(v.passphraseCopy(), salt, nonce, cipherText)
 	if err != nil {
 		return plainVault{}, fmt.Errorf("decrypt vault: %w", err)
 	}
+	defer zeroize(plain)
+
 	var state plainVault
 	if err := json.Unmarshal(plain, &state); err != nil {
 		return plainVault{}, fmt.Errorf("decode vault json: %w", err)
@@ -179,15 +212,15 @@ func (v *EncryptedFileVault) saveUnlocked(state plainVault) error {
 	if err != nil {
 		return fmt.Errorf("marshal vault json: %w", err)
 	}
-	salt := make([]byte, 16)
+	salt := make([]byte, vaultSaltBytes)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return fmt.Errorf("create salt: %w", err)
 	}
-	nonce := make([]byte, 12)
+	nonce := make([]byte, vaultNonceBytes)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return fmt.Errorf("create nonce: %w", err)
 	}
-	cipherText, err := encrypt(v.passphrase, salt, nonce, plain)
+	cipherText, err := encrypt(v.passphraseCopy(), salt, nonce, plain)
 	if err != nil {
 		return fmt.Errorf("encrypt vault: %w", err)
 	}
@@ -200,21 +233,58 @@ func (v *EncryptedFileVault) saveUnlocked(state plainVault) error {
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	if err := os.WriteFile(v.filePath, out, 0o600); err != nil {
-		return fmt.Errorf("write vault: %w", err)
+	dir := filepath.Dir(v.filePath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create vault dir: %w", err)
+	}
+	tmpFile, err := os.CreateTemp(dir, "tokfence-vault-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp vault file: %w", err)
+	}
+	defer func() {
+		_ = os.Remove(tmpFile.Name())
+	}()
+	if _, err := tmpFile.Write(out); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write temp vault file: %w", err)
+	}
+	if err := tmpFile.Chmod(0o600); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("set temp vault file perms: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp vault file: %w", err)
+	}
+	if err := os.Rename(tmpFile.Name(), v.filePath); err != nil {
+		return fmt.Errorf("rename vault file: %w", err)
 	}
 	if err := os.Chmod(v.filePath, 0o600); err != nil {
 		return fmt.Errorf("set vault file perms: %w", err)
 	}
+	zeroize(plain)
+	zeroize(salt)
+	zeroize(nonce)
+	zeroize(cipherText)
 	return nil
 }
 
+func (v *EncryptedFileVault) passphraseCopy() []byte {
+	pass := make([]byte, len(v.passphrase))
+	copy(pass, v.passphrase)
+	return pass
+}
+
 func deriveKey(passphrase, salt []byte) []byte {
-	return argon2.IDKey(passphrase, salt, 1, 64*1024, 4, 32)
+	return argon2.IDKey(passphrase, salt, argonTimeCost, argonMemoryCost, argonParallelism, argonKeyLength)
 }
 
 func encrypt(passphrase, salt, nonce, plain []byte) ([]byte, error) {
-	key := deriveKey(passphrase, salt)
+	passCopy := make([]byte, len(passphrase))
+	copy(passCopy, passphrase)
+	key := deriveKey(passCopy, salt)
+	zeroize(passCopy)
+	defer zeroize(key)
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -227,7 +297,12 @@ func encrypt(passphrase, salt, nonce, plain []byte) ([]byte, error) {
 }
 
 func decrypt(passphrase, salt, nonce, cipherText []byte) ([]byte, error) {
-	key := deriveKey(passphrase, salt)
+	passCopy := make([]byte, len(passphrase))
+	copy(passCopy, passphrase)
+	key := deriveKey(passCopy, salt)
+	zeroize(passCopy)
+	defer zeroize(key)
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
@@ -241,4 +316,10 @@ func decrypt(passphrase, salt, nonce, cipherText []byte) ([]byte, error) {
 		return nil, err
 	}
 	return plain, nil
+}
+
+func zeroize(data []byte) {
+	for i := range data {
+		data[i] = 0
+	}
 }

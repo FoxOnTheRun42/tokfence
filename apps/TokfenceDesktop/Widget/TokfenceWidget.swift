@@ -12,15 +12,12 @@ struct TokfenceProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (TokfenceWidgetEntry) -> Void) {
-        let snapshot = TokfenceSharedStore.loadSnapshot()
-        completion(TokfenceWidgetEntry(date: Date(), snapshot: snapshot))
+        completion(TokfenceWidgetEntry(date: Date(), snapshot: TokfenceSharedStore.loadSnapshot()))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<TokfenceWidgetEntry>) -> Void) {
-        let snapshot = TokfenceSharedStore.loadSnapshot()
-        let entry = TokfenceWidgetEntry(date: Date(), snapshot: snapshot)
-        let nextRefresh = Date().addingTimeInterval(60)
-        completion(Timeline(entries: [entry], policy: .after(nextRefresh)))
+        let entry = TokfenceWidgetEntry(date: Date(), snapshot: TokfenceSharedStore.loadSnapshot())
+        completion(Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(60))))
     }
 }
 
@@ -37,73 +34,106 @@ struct TokfenceWidgetEntryView: View {
         }
     }
 
+    private var dailyBudget: TokfenceBudget? {
+        entry.snapshot.budgets.first(where: { $0.provider == "global" && $0.period.lowercased() == "daily" })
+    }
+
+    private var providersLine: String {
+        let active = entry.snapshot.providers.filter { !entry.snapshot.revokedProviders.contains($0) }
+        if active.isEmpty {
+            return "no providers"
+        }
+        return active.prefix(3).map(TokfenceFormatting.providerLabel).joined(separator: " · ")
+    }
+
     private var small: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(entry.snapshot.running ? "Tokfence Online" : "Tokfence Offline")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-            Text(TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white)
-            Text("\(entry.snapshot.todayRequests) requests today")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.8))
-            Spacer()
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Image(systemName: "shield.lefthalf.filled")
-                Text(entry.snapshot.revokedProviders.isEmpty ? "All providers active" : "\(entry.snapshot.revokedProviders.count) revoked")
+                Text("Tokfence")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Circle()
+                    .fill(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
+                    .frame(width: 8, height: 8)
             }
-            .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(.white.opacity(0.8))
+
+            Text(TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
+                .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            Text("\(entry.snapshot.todayRequests) requests")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+
+            if let budget = dailyBudget {
+                WidgetBudgetBar(current: budget.currentSpendCents, limit: budget.limitCents)
+            } else {
+                Text("No daily budget")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+            }
         }
         .padding(12)
         .containerBackground(for: .widget) {
-            LinearGradient(colors: [Color(red: 0.09, green: 0.19, blue: 0.34), Color(red: 0.15, green: 0.12, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            TokfenceTheme.bgSecondary
         }
     }
 
     private var medium: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(entry.snapshot.running ? "Tokfence Running" : "Tokfence Offline")
-                    .font(.system(size: 13, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Cost Today")
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.8))
-                Text(TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
-                    .font(.system(size: 26, weight: .heavy, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("\(entry.snapshot.todayRequests) requests · In \(TokfenceFormatting.tokens(entry.snapshot.todayInputTokens)) · Out \(TokfenceFormatting.tokens(entry.snapshot.todayOutputTokens))")
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 6) {
-                Text("Budgets")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                if let budget = entry.snapshot.budgets.first {
-                    let progress = TokfenceFormatting.percent(current: budget.currentSpendCents, limit: budget.limitCents)
-                    Text(budget.provider)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.9))
-                    ProgressView(value: progress)
-                        .tint(progress < 0.8 ? .green : (progress < 1.0 ? .orange : .red))
-                        .frame(width: 100)
-                    Text("\(Int(progress * 100))%")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.8))
-                } else {
-                    Text("No budgets")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.85))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Tokfence")
+                    .font(.system(size: 13, weight: .semibold))
+                Circle()
+                    .fill(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
+                    .frame(width: 8, height: 8)
+                Text(entry.snapshot.running ? "Online" : "Offline")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+                Spacer()
+                if entry.snapshot.killSwitchActive {
+                    Text("KILLED")
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.vertical, 2)
+                        .padding(.horizontal, 6)
+                        .background(TokfenceTheme.danger, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                        .foregroundStyle(.white)
                 }
             }
+
+            HStack(spacing: 16) {
+                metric(title: "cost", value: TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
+                metric(title: "requests", value: "\(entry.snapshot.todayRequests)")
+                metric(title: "tokens", value: TokfenceFormatting.tokens(entry.snapshot.todayInputTokens + entry.snapshot.todayOutputTokens))
+            }
+
+            if let budget = dailyBudget {
+                HStack {
+                    Text("Budget")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                    WidgetBudgetBar(current: budget.currentSpendCents, limit: budget.limitCents)
+                }
+            }
+
+            Text(providersLine)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+                .lineLimit(1)
         }
-        .padding(14)
+        .padding(12)
         .containerBackground(for: .widget) {
-            LinearGradient(colors: [Color(red: 0.09, green: 0.19, blue: 0.34), Color(red: 0.15, green: 0.12, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            TokfenceTheme.bgSecondary
+        }
+    }
+
+    private func metric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            Text(title)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(TokfenceTheme.textSecondary)
         }
     }
 }
@@ -116,8 +146,29 @@ struct TokfenceWidget: Widget {
             TokfenceWidgetEntryView(entry: entry)
         }
         .configurationDisplayName("Tokfence")
-        .description("See Tokfence status, spend, and control posture at a glance.")
+        .description("Local cost, usage and kill switch status at a glance.")
         .supportedFamilies([.systemSmall, .systemMedium])
+    }
+}
+
+private struct WidgetBudgetBar: View {
+    let current: Int64
+    let limit: Int64
+
+    var body: some View {
+        let progress = TokfenceFormatting.percent(current: current, limit: limit)
+        let capped = min(progress, 1.0)
+        let color = TokfenceTheme.budgetColor(progress: progress)
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(TokfenceTheme.bgTertiary)
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(color)
+                    .frame(width: proxy.size.width * capped)
+            }
+        }
+        .frame(height: 7)
     }
 }
 

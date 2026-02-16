@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,8 @@ var (
 	configPath string
 	outputJSON bool
 )
+
+const daemonNonceEnv = "TOKFENCE_DAEMON_NONCE"
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -61,6 +65,7 @@ func main() {
 
 func newStartCommand() *cobra.Command {
 	var daemonize bool
+	var daemonNonce string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start tokfence daemon",
@@ -69,17 +74,24 @@ func newStartCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if daemonize && os.Getenv("TOKFENCE_BACKGROUND") != "1" {
-				return spawnBackground(cfg)
+			if daemonNonce == "" {
+				daemonNonce = os.Getenv(daemonNonceEnv)
 			}
-			return runForeground(cfg)
+			if daemonize && os.Getenv("TOKFENCE_BACKGROUND") != "1" {
+				return spawnBackground(cfg, daemonNonce)
+			}
+			return runForeground(cfg, daemonNonce)
 		},
 	}
 	cmd.Flags().BoolVarP(&daemonize, "daemon", "d", false, "run in background")
+	cmd.Flags().StringVar(&daemonNonce, "tokfence-daemon-nonce", "", "internal daemon nonce")
+	if flag := cmd.Flags().Lookup("tokfence-daemon-nonce"); flag != nil {
+		flag.Hidden = true
+	}
 	return cmd
 }
 
-func runForeground(cfg config.Config) error {
+func runForeground(cfg config.Config, daemonNonce string) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -99,7 +111,24 @@ func runForeground(cfg config.Config) error {
 
 	engine := budget.NewEngine(store.DB())
 	server := daemon.NewServer(cfg, v, store, engine)
-	if err := writePIDFile(os.Getpid(), server.Addr()); err != nil {
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve daemon binary path: %w", err)
+	}
+	resolvedExecPath := execPath
+	if expanded, expandErr := config.ExpandPath(execPath); expandErr == nil && expanded != "" {
+		resolvedExecPath = expanded
+	}
+	execPath = resolvedExecPath
+	nonce := strings.TrimSpace(daemonNonce)
+	if nonce == "" {
+		var err error
+		nonce, err = randomHex(16)
+		if err != nil {
+			return fmt.Errorf("generate daemon nonce: %w", err)
+		}
+	}
+	if err := writePIDFile(os.Getpid(), server.Addr(), execPath, os.Getuid(), nonce); err != nil {
 		return err
 	}
 	defer removePIDFile()
@@ -114,14 +143,21 @@ func runForeground(cfg config.Config) error {
 	return nil
 }
 
-func spawnBackground(cfg config.Config) error {
+func spawnBackground(cfg config.Config, daemonNonce string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
 	}
-	args := []string{"start", "--config", configPath}
+	nonce := strings.TrimSpace(daemonNonce)
+	if nonce == "" {
+		nonce, err = randomHex(16)
+		if err != nil {
+			return fmt.Errorf("generate daemon nonce: %w", err)
+		}
+	}
+	args := []string{"start", "--config", configPath, "--tokfence-daemon-nonce", nonce}
 	cmd := exec.Command(exe, args...)
-	cmd.Env = append(os.Environ(), "TOKFENCE_BACKGROUND=1")
+	cmd.Env = append(os.Environ(), "TOKFENCE_BACKGROUND=1", daemonNonceEnv+"="+nonce)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	logPath := filepath.Join(mustDataDir(), "tokfence.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -153,6 +189,9 @@ func newStopCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := verifyDaemonProcess(state); err != nil {
+				return err
+			}
 			if err := syscall.Kill(state.PID, syscall.SIGTERM); err != nil {
 				if errors.Is(err, os.ErrProcessDone) {
 					removePIDFile()
@@ -162,7 +201,7 @@ func newStopCommand() *cobra.Command {
 			}
 			deadline := time.Now().Add(30 * time.Second)
 			for time.Now().Before(deadline) {
-				alive := processAlive(state.PID)
+				alive := isProtectedProcessAlive(state)
 				if !alive {
 					removePIDFile()
 					if outputJSON {
@@ -191,7 +230,20 @@ func newStatusCommand() *cobra.Command {
 				fmt.Println("tokfence daemon is not running")
 				return nil
 			}
-			running := processAlive(state.PID)
+			running, reason := protectedProcessState(state)
+			if !running && reason != "" {
+				if outputJSON {
+					return printJSON(map[string]any{
+						"running": false,
+						"pid":     state.PID,
+						"addr":    state.Addr,
+						"started": state.StartedAt,
+						"error":   reason,
+					})
+				}
+				fmt.Printf("tokfence daemon is not running (%s)\n", reason)
+				return nil
+			}
 			if outputJSON {
 				return printJSON(map[string]any{
 					"running": running,
@@ -640,6 +692,42 @@ func newRateLimitCommand() *cobra.Command {
 	rateCmd := &cobra.Command{Use: "ratelimit", Short: "Manage per-provider rate limits"}
 
 	rateCmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show configured requests-per-minute limits",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			store, err := logger.Open(cfg.Logging.DBPath)
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			limits, err := store.ListRateLimits(context.Background())
+			if err != nil {
+				return err
+			}
+			if outputJSON {
+				return printJSON(limits)
+			}
+			if len(limits) == 0 {
+				fmt.Println("no rate limits configured")
+				return nil
+			}
+			providers := make([]string, 0, len(limits))
+			for provider := range limits {
+				providers = append(providers, provider)
+			}
+			sort.Strings(providers)
+			for _, provider := range providers {
+				fmt.Printf("%s: %d rpm\n", provider, limits[provider])
+			}
+			return nil
+		},
+	})
+
+	rateCmd.AddCommand(&cobra.Command{
 		Use:   "set <provider> <rpm>",
 		Short: "Set requests-per-minute limit",
 		Args:  cobra.ExactArgs(2),
@@ -1019,34 +1107,45 @@ func shellQuote(raw string) string {
 }
 
 type widgetSnapshot struct {
-	GeneratedAt       time.Time       `json:"generated_at"`
-	Running           bool            `json:"running"`
-	PID               int             `json:"pid,omitempty"`
-	Addr              string          `json:"addr,omitempty"`
-	TodayRequests     int             `json:"today_requests"`
-	TodayInputTokens  int64           `json:"today_input_tokens"`
-	TodayOutputTokens int64           `json:"today_output_tokens"`
-	TodayCostCents    int64           `json:"today_cost_cents"`
-	TopProvider       string          `json:"top_provider,omitempty"`
-	TopProviderCents  int64           `json:"top_provider_cost_cents,omitempty"`
-	Budgets           []budget.Budget `json:"budgets"`
-	RevokedProviders  []string        `json:"revoked_providers"`
-	VaultProviders    []string        `json:"vault_providers"`
-	LastRequestAt     string          `json:"last_request_at,omitempty"`
-	Warnings          []string        `json:"warnings,omitempty"`
+	GeneratedAt       time.Time         `json:"generated_at"`
+	Running           bool              `json:"running"`
+	PID               int               `json:"pid,omitempty"`
+	Addr              string            `json:"addr,omitempty"`
+	TodayRequests     int               `json:"today_requests"`
+	TodayInputTokens  int64             `json:"today_input_tokens"`
+	TodayOutputTokens int64             `json:"today_output_tokens"`
+	TodayCostCents    int64             `json:"today_cost_cents"`
+	TopProvider       string            `json:"top_provider,omitempty"`
+	TopProviderCents  int64             `json:"top_provider_cost_cents,omitempty"`
+	Budgets           []budget.Budget   `json:"budgets"`
+	RevokedProviders  []string          `json:"revoked_providers"`
+	VaultProviders    []string          `json:"vault_providers"`
+	Providers         []string          `json:"providers,omitempty"`
+	ProviderUpstreams map[string]string `json:"provider_upstreams,omitempty"`
+	RateLimits        map[string]int    `json:"rate_limits,omitempty"`
+	KillSwitchActive  bool              `json:"kill_switch_active"`
+	LastRequestAt     string            `json:"last_request_at,omitempty"`
+	Warnings          []string          `json:"warnings,omitempty"`
 }
 
 func collectWidgetSnapshot(ctx context.Context) widgetSnapshot {
 	snapshot := widgetSnapshot{
-		GeneratedAt:      time.Now().UTC(),
-		Budgets:          []budget.Budget{},
-		RevokedProviders: []string{},
-		VaultProviders:   []string{},
-		Warnings:         []string{},
+		GeneratedAt:       time.Now().UTC(),
+		Budgets:           []budget.Budget{},
+		RevokedProviders:  []string{},
+		VaultProviders:    []string{},
+		Providers:         []string{},
+		ProviderUpstreams: map[string]string{},
+		RateLimits:        map[string]int{},
+		Warnings:          []string{},
 	}
 
 	if state, err := readPIDFile(); err == nil {
-		snapshot.Running = processAlive(state.PID)
+		running, reason := protectedProcessState(state)
+		snapshot.Running = running
+		if reason != "" {
+			snapshot.Warnings = append(snapshot.Warnings, "daemon: "+reason)
+		}
 		snapshot.PID = state.PID
 		snapshot.Addr = state.Addr
 	}
@@ -1101,6 +1200,10 @@ func collectWidgetSnapshot(ctx context.Context) widgetSnapshot {
 			providers = append(providers, provider)
 		}
 		sort.Strings(providers)
+		snapshot.Providers = append(snapshot.Providers, providers...)
+		for _, provider := range providers {
+			snapshot.ProviderUpstreams[provider] = cfg.Providers[provider].Upstream
+		}
 		for _, provider := range providers {
 			revoked, revokedErr := store.IsProviderRevoked(ctx, provider)
 			if revokedErr != nil {
@@ -1110,6 +1213,15 @@ func collectWidgetSnapshot(ctx context.Context) widgetSnapshot {
 			if revoked {
 				snapshot.RevokedProviders = append(snapshot.RevokedProviders, provider)
 			}
+		}
+		limits, limitErr := store.ListRateLimits(ctx)
+		if limitErr != nil {
+			snapshot.Warnings = append(snapshot.Warnings, "ratelimits: "+limitErr.Error())
+		} else {
+			snapshot.RateLimits = limits
+		}
+		if len(providers) > 0 && len(snapshot.RevokedProviders) == len(providers) {
+			snapshot.KillSwitchActive = true
 		}
 	}
 
@@ -1248,6 +1360,9 @@ type daemonState struct {
 	PID       int    `json:"pid"`
 	Addr      string `json:"addr"`
 	StartedAt string `json:"started_at"`
+	UID       int    `json:"uid"`
+	Binary    string `json:"binary"`
+	CmdNonce  string `json:"cmd_nonce"`
 }
 
 func pidFilePath() string {
@@ -1261,14 +1376,51 @@ func mustDataDir() string {
 	return dir
 }
 
-func writePIDFile(pid int, addr string) error {
-	state := daemonState{PID: pid, Addr: addr, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+func writePIDFile(pid int, addr, binary string, uid int, cmdNonce string) error {
+	state := daemonState{
+		PID:       pid,
+		Addr:      addr,
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+		UID:       uid,
+		Binary:    binary,
+		CmdNonce:  cmdNonce,
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(pidFilePath(), data, 0o600); err != nil {
-		return fmt.Errorf("write pid file: %w", err)
+	pidPath := pidFilePath()
+	pidDir := filepath.Dir(pidPath)
+	if err := os.MkdirAll(pidDir, 0o700); err != nil {
+		return fmt.Errorf("create pid dir: %w", err)
+	}
+	if err := os.Chmod(pidDir, 0o700); err != nil {
+		return fmt.Errorf("set pid dir perms: %w", err)
+	}
+	if fi, err := os.Lstat(pidPath); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("pid file path is a symlink")
+	}
+	tmp, err := os.CreateTemp(pidDir, "tokfence.pid.tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp pid file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp pid file: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("set temp pid file perms: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp pid file: %w", err)
+	}
+	if err := os.Rename(tmpPath, pidPath); err != nil {
+		return fmt.Errorf("rename pid file: %w", err)
 	}
 	return nil
 }
@@ -1298,6 +1450,108 @@ func processAlive(pid int) bool {
 	}
 	err := syscall.Kill(pid, 0)
 	return err == nil
+}
+
+func processCommandLine(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	cmd := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func processCommandMatchesBinary(pid int, expected string) bool {
+	if strings.TrimSpace(expected) == "" {
+		return false
+	}
+	commandLine := processCommandLine(pid)
+	if commandLine == "" {
+		return false
+	}
+	parts := strings.Fields(commandLine)
+	if len(parts) == 0 {
+		return false
+	}
+	procName := parts[0]
+	if procName == expected || strings.HasSuffix(procName, "/"+filepath.Base(expected)) {
+		return true
+	}
+	if filepath.Base(procName) == filepath.Base(expected) {
+		return true
+	}
+	return false
+}
+
+func processCommandContainsNonce(pid int, nonce string) bool {
+	if strings.TrimSpace(nonce) == "" {
+		return true
+	}
+	commandLine := processCommandLine(pid)
+	if commandLine == "" {
+		return false
+	}
+	if strings.Contains(commandLine, daemonNonceEnv+"="+nonce) {
+		return true
+	}
+	fields := strings.Fields(commandLine)
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--tokfence-daemon-nonce" {
+			if i+1 < len(fields) && fields[i+1] == nonce {
+				return true
+			}
+			continue
+		}
+		if strings.HasPrefix(fields[i], "--tokfence-daemon-nonce=") {
+			if strings.TrimPrefix(fields[i], "--tokfence-daemon-nonce=") == nonce {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func verifyDaemonProcess(state daemonState) error {
+	if state.PID <= 0 {
+		return errors.New("invalid pid in pid file")
+	}
+	if !processAlive(state.PID) {
+		return fmt.Errorf("no running process for pid %d", state.PID)
+	}
+	if state.UID != 0 && state.UID != os.Getuid() {
+		return errors.New("pid file owner mismatch: refusing to stop foreign process")
+	}
+	if state.Binary != "" && !processCommandMatchesBinary(state.PID, state.Binary) {
+		return errors.New("pid file identity mismatch: refusing to stop foreign process")
+	}
+	if state.CmdNonce != "" && !processCommandContainsNonce(state.PID, state.CmdNonce) {
+		return errors.New("pid file identity mismatch: nonce mismatch")
+	}
+	return nil
+}
+
+func protectedProcessState(state daemonState) (bool, string) {
+	if err := verifyDaemonProcess(state); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
+func isProtectedProcessAlive(state daemonState) bool {
+	_, reason := protectedProcessState(state)
+	return reason == ""
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func parseWindowStart(raw string) (time.Time, error) {

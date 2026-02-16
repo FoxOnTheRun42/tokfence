@@ -7,11 +7,36 @@ import (
 )
 
 func StripIncomingAuth(headers http.Header) {
-	headers.Del("Authorization")
-	headers.Del("X-API-Key")
-	headers.Del("x-api-key")
-	headers.Del("X-Goog-Api-Key")
-	headers.Del("x-goog-api-key")
+	blocked := []string{
+		"authorization",
+		"proxy-authorization",
+		"x-api-key",
+		"api-key",
+		"token",
+		"x-goog-api-key",
+		"bearer",
+	}
+
+	for key := range headers {
+		lower := strings.ToLower(key)
+		for _, candidate := range blocked {
+			if strings.Contains(lower, candidate) {
+				headers.Del(key)
+				break
+			}
+		}
+	}
+
+	for key := range headers {
+		for _, value := range headers[key] {
+			for _, candidate := range blocked {
+				if strings.Contains(strings.ToLower(value), candidate) {
+					headers.Del(key)
+					break
+				}
+			}
+		}
+	}
 }
 
 func ApplyProviderAuth(headers http.Header, provider, key string) error {

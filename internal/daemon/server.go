@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,17 +26,32 @@ import (
 	"github.com/macfox/tokfence/internal/vault"
 )
 
+const (
+	defaultRequestBodyLimit = 8 * 1024 * 1024
+)
+
+func maxRequestBodyLimit() int64 {
+	limit := int64(defaultRequestBodyLimit)
+	if raw := strings.TrimSpace(os.Getenv("TOKFENCE_MAX_REQUEST_BODY_BYTES")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	return limit
+}
+
 type Server struct {
-	cfg        config.Config
-	vault      vault.Vault
-	store      *logger.LogStore
-	budget     *budget.Engine
-	limiter    *RateLimiter
-	httpSrv    *http.Server
-	httpClient *http.Client
-	logger     *slog.Logger
-	startedAt  time.Time
-	isRunning  atomic.Bool
+	cfg               config.Config
+	vault             vault.Vault
+	store             *logger.LogStore
+	budget            *budget.Engine
+	limiter           *RateLimiter
+	httpSrv           *http.Server
+	httpClient        *http.Client
+	logger            *slog.Logger
+	startedAt         time.Time
+	isRunning         atomic.Bool
+	maxRequestBodyRaw int64
 }
 
 func NewServer(cfg config.Config, v vault.Vault, store *logger.LogStore, engine *budget.Engine) *Server {
@@ -47,13 +64,14 @@ func NewServer(cfg config.Config, v vault.Vault, store *logger.LogStore, engine 
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 	return &Server{
-		cfg:        cfg,
-		vault:      v,
-		store:      store,
-		budget:     engine,
-		limiter:    NewRateLimiter(),
-		httpClient: &http.Client{Transport: transport},
-		logger:     slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+		cfg:               cfg,
+		vault:             v,
+		store:             store,
+		budget:            engine,
+		limiter:           NewRateLimiter(),
+		httpClient:        &http.Client{Transport: transport},
+		logger:            slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+		maxRequestBodyRaw: maxRequestBodyLimit(),
 	}
 }
 
@@ -74,6 +92,9 @@ func (s *Server) Run(ctx context.Context) error {
 		Addr:              s.Addr(),
 		Handler:           mux,
 		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      10 * time.Minute,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)
@@ -115,7 +136,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSONError(w, http.StatusOK, map[string]any{
+	w.Header().Set("Content-Type", "application/json")
+	_ = jsonResponse(w, map[string]any{
 		"name":       "tokfence",
 		"status":     "ok",
 		"addr":       s.Addr(),
@@ -123,71 +145,122 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func jsonResponse(w http.ResponseWriter, payload any) error {
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(payload)
+}
+
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
+	requestID := ulid.Make().String()
+	w.Header().Set("X-Tokfence-Request-ID", requestID)
+
 	ctx := r.Context()
 	started := time.Now()
 
 	route, err := proxy.ResolveRoute(s.cfg, r.URL.Path, r.URL.RawQuery)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "invalid_route", "message": err.Error()}})
+		writeJSONError(w, http.StatusBadRequest, errorPayload{
+			Type:      "tokfence_invalid_route",
+			Message:   err.Error(),
+			RequestID: requestID,
+		}, map[string]any{})
 		return
 	}
 
 	revoked, err := s.store.IsProviderRevoked(ctx, route.Provider)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "status_lookup_failed", "message": err.Error()}})
+		writeJSONError(w, http.StatusInternalServerError, errorPayload{
+			Type:      "tokfence_status_lookup_failed",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	if revoked {
-		writeProviderRevoked(w, route.Provider)
+		writeProviderRevoked(w, requestID, route.Provider)
 		return
 	}
 
 	exceeded, err := s.budget.CheckLimit(ctx, route.Provider)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "budget_check_failed", "message": err.Error()}})
+		writeJSONError(w, http.StatusInternalServerError, errorPayload{
+			Type:      "tokfence_budget_check_failed",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	if exceeded != nil {
-		writeBudgetExceeded(w, exceeded.Provider, exceeded.BudgetLimit, exceeded.CurrentSpend, exceeded.ResetsAt)
+		writeBudgetExceeded(w, requestID, exceeded.Provider, exceeded.BudgetLimit, exceeded.CurrentSpend, exceeded.ResetsAt)
 		return
 	}
 
 	rpm, err := s.store.GetRateLimit(ctx, route.Provider)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "ratelimit_lookup_failed", "message": err.Error()}})
+		writeJSONError(w, http.StatusInternalServerError, errorPayload{
+			Type:      "tokfence_ratelimit_lookup_failed",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	if !s.limiter.Allow(route.Provider, rpm) {
-		writeRateLimitExceeded(w, route.Provider, rpm)
+		retryAfter := 1
+		writeRateLimitExceeded(w, requestID, route.Provider, rpm, &retryAfter)
 		return
 	}
 
-	requestBody, err := io.ReadAll(r.Body)
+	limitedBody := http.MaxBytesReader(w, r.Body, s.maxRequestBodyRaw)
+	requestBody, err := io.ReadAll(limitedBody)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "read_request_failed", "message": err.Error()}})
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeRequestTooLarge(w, requestID, s.maxRequestBodyRaw)
+			return
+		}
+		writeReadBodyFailed(w, requestID, err)
 		return
 	}
+
 	isStreaming := proxy.IsStreamingJSON(requestBody)
 	model := logger.ExtractModelFromRequest(requestBody)
 	requestHash := logger.RequestHash(requestBody)
-	callerPID, callerName := process.Identify(ctx, r)
+	identity := process.Identify(ctx, r)
 
 	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, route.ForwardedURL.String(), bytes.NewReader(requestBody))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "request_build_failed", "message": err.Error()}})
+		writeJSONError(w, http.StatusInternalServerError, errorPayload{
+			Type:      "tokfence_request_build_failed",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	upstreamReq.Header = cloneHeaders(r.Header)
 	proxy.StripIncomingAuth(upstreamReq.Header)
+	upstreamReq.Header.Set("X-Tokfence-Request-ID", requestID)
 
 	key, err := s.lookupProviderKey(ctx, route.Provider)
 	if err != nil {
-		writeJSONError(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "missing_api_key", "message": err.Error()}})
+		writeJSONError(w, http.StatusUnauthorized, errorPayload{
+			Type:      "tokfence_missing_api_key",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	if err := proxy.ApplyProviderAuth(upstreamReq.Header, route.Provider, key); err != nil {
-		writeJSONError(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "auth_injection_failed", "message": err.Error()}})
+		writeJSONError(w, http.StatusUnauthorized, errorPayload{
+			Type:      "tokfence_auth_injection_failed",
+			Message:   err.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
 		return
 	}
 	if providerCfg, ok := s.cfg.Providers[route.Provider]; ok {
@@ -198,9 +271,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := s.httpClient.Do(upstreamReq)
 	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, map[string]any{"error": map[string]any{"type": "upstream_request_failed", "message": err.Error()}})
+		writeUpstreamError(w, requestID, route.Provider, "tokfence_upstream_request_failed", err.Error())
 		s.logRequest(ctx, logger.RequestRecord{
-			ID:           ulid.Make().String(),
+			ID:           requestID,
 			Timestamp:    time.Now().UTC(),
 			Provider:     route.Provider,
 			Model:        model,
@@ -208,8 +281,8 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 			Method:       r.Method,
 			StatusCode:   http.StatusBadGateway,
 			LatencyMS:    int(time.Since(started).Milliseconds()),
-			CallerPID:    callerPID,
-			CallerName:   callerName,
+			CallerPID:    identity.PID,
+			CallerName:   identity.Name,
 			IsStreaming:  isStreaming,
 			ErrorType:    "upstream_request_failed",
 			ErrorMessage: err.Error(),
@@ -231,33 +304,21 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		buf := make([]byte, 16*1024)
 		firstChunkAt := time.Time{}
-		for {
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if firstChunkAt.IsZero() {
-					firstChunkAt = time.Now()
-					ttftMs = int(firstChunkAt.Sub(started).Milliseconds())
-				}
-				chunk := buf[:n]
-				_, _ = responseCapture.Write(chunk)
-				if _, writeErr := w.Write(chunk); writeErr != nil {
-					break
-				}
-				if flusher != nil {
-					flusher.Flush()
-				}
+		if _, readErr := proxy.CopySSE(w, resp.Body, flusher, responseCapture, func(chunk []byte) {
+			if firstChunkAt.IsZero() {
+				firstChunkAt = time.Now()
+				ttftMs = int(firstChunkAt.Sub(started).Milliseconds())
 			}
-			if readErr != nil {
-				break
-			}
+		}); readErr != nil && !errors.Is(readErr, context.Canceled) {
+			s.logger.Warn("stream copy failed", "error", readErr)
 		}
 	} else {
 		responseBody, readErr := io.ReadAll(resp.Body)
-		if readErr == nil {
-			_, _ = responseCapture.Write(responseBody)
+		if readErr != nil {
+			s.logger.Warn("non-stream read failed", "error", readErr)
 		}
+		_, _ = responseCapture.Write(responseBody)
 		w.WriteHeader(statusCode)
 		if responseCapture.Len() > 0 {
 			_, _ = w.Write(responseCapture.Bytes())
@@ -279,7 +340,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	estimatedCost := budget.EstimateCostCents(model, usage.InputTokens, usage.OutputTokens)
 	record := logger.RequestRecord{
-		ID:                  ulid.Make().String(),
+		ID:                  requestID,
 		Timestamp:           time.Now().UTC(),
 		Provider:            route.Provider,
 		Model:               model,
@@ -293,8 +354,8 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		StatusCode:          statusCode,
 		LatencyMS:           int(time.Since(started).Milliseconds()),
 		TTFTMS:              ttftMs,
-		CallerPID:           callerPID,
-		CallerName:          callerName,
+		CallerPID:           identity.PID,
+		CallerName:          identity.Name,
 		IsStreaming:         isStreaming,
 		ErrorType:           errorType,
 		ErrorMessage:        errorMessage,
