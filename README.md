@@ -176,6 +176,22 @@ In the app:
 2. Click `Refresh` to pull live status from `tokfence widget render --json`.
 3. Add the Tokfence widget from macOS widget gallery.
 
+## Desktop Screenshots
+
+Current UI screenshots are versioned in `docs/screenshots/`:
+
+| Dashboard | Vault |
+| --- | --- |
+| ![Tokfence Dashboard](docs/screenshots/dashboard.png) | ![Tokfence Vault](docs/screenshots/vault.png) |
+
+| Logs | Budget |
+| --- | --- |
+| ![Tokfence Logs](docs/screenshots/logs.png) | ![Tokfence Budget](docs/screenshots/budget.png) |
+
+| Providers | Settings |
+| --- | --- |
+| ![Tokfence Providers](docs/screenshots/providers.png) | ![Tokfence Settings](docs/screenshots/settings.png) |
+
 ## Config
 
 Default config path: `~/.tokfence/config.toml`
