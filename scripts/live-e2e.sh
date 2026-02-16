@@ -28,12 +28,18 @@ BASE_URL="http://$TOKFENCE_HOST:$TOKFENCE_PORT"
 STARTED_DAEMON=0
 REQUEST_ID=""
 TMP_DIR="$(mktemp -d)"
+LOG_FOLLOW_PID=""
 
 trap cleanup EXIT
 
 cleanup() {
     if [[ "$REQUEST_ID" != "" ]]; then
         :  # placeholder for optional future trace
+    fi
+
+    if [[ -n "${LOG_FOLLOW_PID:-}" ]]; then
+        kill "$LOG_FOLLOW_PID" >/dev/null 2>&1 || true
+        wait "$LOG_FOLLOW_PID" >/dev/null 2>&1 || true
     fi
 
     if [[ "$STARTED_DAEMON" -eq 1 && "$TOKFENCE_KEEP_DAEMON" != "1" ]]; then
@@ -301,6 +307,53 @@ print(int(snapshot.get("today_cost_cents", 0)))
 PY
 }
 
+start_log_follow() {
+    local provider="$1"
+    local logs_file="$2"
+    run_json log --json -f --provider "$provider" --since 0s > "$logs_file" 2>/dev/null &
+    LOG_FOLLOW_PID=$!
+}
+
+stop_log_follow() {
+    if [[ -n "${LOG_FOLLOW_PID:-}" ]]; then
+        kill "$LOG_FOLLOW_PID" >/dev/null 2>&1 || true
+        wait "$LOG_FOLLOW_PID" >/dev/null 2>&1 || true
+        LOG_FOLLOW_PID=""
+    fi
+}
+
+validate_log_follow() {
+    local provider="$1"
+    local logs_file="$2"
+    python3 - "$provider" "$logs_file" <<'PY'
+import json
+import sys
+
+provider = sys.argv[1]
+path = sys.argv[2]
+with open(path, "r", encoding="utf-8") as handle:
+    for raw in handle:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if row.get("provider") != provider:
+            continue
+        status_code = int(row.get("status_code", 0))
+        if status_code < 200 or status_code >= 300:
+            continue
+        print(row.get("id", ""))
+        print(row.get("estimated_cost_cents", 0))
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 main() {
     require_provider_vars "$TOKFENCE_PROVIDER"
     build_if_needed
@@ -320,6 +373,8 @@ main() {
     ensure_daemon
 
     echo "$key" | run_json vault add "$TOKFENCE_PROVIDER" -
+    FOLLOW_LOGS_FILE="$TMP_DIR/follow.log.jsonl"
+    start_log_follow "$TOKFENCE_PROVIDER" "$FOLLOW_LOGS_FILE"
 
     local route
     if [[ "$TOKFENCE_PROVIDER" == "anthropic" ]]; then
@@ -329,6 +384,23 @@ main() {
     fi
     echo "send request -> $BASE_URL$route"
     send_stream_request "$TOKFENCE_PROVIDER" "$route"
+    stop_log_follow
+
+    echo "validate follow logs..."
+    local follow_report
+    if ! follow_report="$(validate_log_follow "$TOKFENCE_PROVIDER" "$FOLLOW_LOGS_FILE")"; then
+        echo "live follow log validation failed"
+        exit 1
+    fi
+    local follow_id
+    local follow_cost
+    follow_id="$(printf '%s\n' "$follow_report" | sed -n 1p)"
+    follow_cost="$(printf '%s\n' "$follow_report" | sed -n 2p)"
+    echo "follow log id: $follow_id, estimated_cost_cents=$follow_cost"
+    if [[ -z "$follow_id" ]]; then
+        echo "follow log validation did not return request id"
+        exit 1
+    fi
 
     echo "validate logs..."
     local log_report

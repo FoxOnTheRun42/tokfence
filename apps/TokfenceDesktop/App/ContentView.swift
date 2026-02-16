@@ -38,6 +38,19 @@ struct ContentView: View {
                 .zIndex(1)
             }
         }
+        .alert("Daemon identity mismatch", isPresented: $viewModel.showDaemonIdentityMismatchDialog) {
+            Button("Retry") {
+                Task { await viewModel.refreshAll() }
+            }
+            Button("Clear stale pid file", role: .destructive) {
+                Task { await viewModel.clearDaemonPIDFile() }
+            }
+            Button("Dismiss", role: .cancel) {
+                viewModel.dismissDaemonIdentityMismatch()
+            }
+        } message: {
+            Text(viewModel.daemonIdentityMismatchError)
+        }
         .animation(TokfenceTheme.uiAnimation, value: viewModel.showErrorToast)
         .background(TokfenceTheme.bgPrimary)
     }

@@ -50,6 +50,7 @@ struct TokfenceDaemonStatus: Codable, Hashable {
     let pid: Int?
     let addr: String?
     let started: Date?
+    let error: String?
 }
 
 struct TokfenceLogRecord: Codable, Hashable, Identifiable {

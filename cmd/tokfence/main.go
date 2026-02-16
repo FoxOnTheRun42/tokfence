@@ -510,6 +510,7 @@ func followLogs(store *logger.LogStore, provider, model string, since time.Time)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	latest := since
+	encoder := json.NewEncoder(os.Stdout)
 	for {
 		select {
 		case <-ctx.Done():
@@ -526,16 +527,22 @@ func followLogs(store *logger.LogStore, provider, model string, since time.Time)
 				if !rec.Timestamp.After(latest) {
 					continue
 				}
-				fmt.Printf("%s %s %s %s %d in=%d out=%d cost=$%.2f\n",
-					rec.ID,
-					rec.Timestamp.Format(time.RFC3339),
-					rec.Provider,
-					rec.Model,
-					rec.StatusCode,
-					rec.InputTokens,
-					rec.OutputTokens,
-					float64(rec.EstimatedCostCents)/100.0,
-				)
+				if outputJSON {
+					if err := encoder.Encode(rec); err != nil {
+						return err
+					}
+				} else {
+					fmt.Printf("%s %s %s %s %d in=%d out=%d cost=$%.2f\n",
+						rec.ID,
+						rec.Timestamp.Format(time.RFC3339),
+						rec.Provider,
+						rec.Model,
+						rec.StatusCode,
+						rec.InputTokens,
+						rec.OutputTokens,
+						float64(rec.EstimatedCostCents)/100.0,
+					)
+				}
 				latest = rec.Timestamp
 			}
 		}

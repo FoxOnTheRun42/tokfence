@@ -63,7 +63,7 @@ struct TokfenceProviderOverview: Identifiable, Hashable {
 final class TokfenceAppViewModel: ObservableObject {
     @Published var selectedSection: TokfenceSection = .dashboard
     @Published var snapshot: TokfenceSnapshot = TokfenceSharedStore.loadSnapshot()
-    @Published var daemonStatus: TokfenceDaemonStatus = TokfenceDaemonStatus(running: false, pid: nil, addr: nil, started: nil)
+    @Published var daemonStatus: TokfenceDaemonStatus = TokfenceDaemonStatus(running: false, pid: nil, addr: nil, started: nil, error: nil)
     @Published var logs: [TokfenceLogRecord] = []
     @Published var statsByProvider: [TokfenceStatsRow] = []
     @Published var statsByModel: [TokfenceStatsRow] = []
@@ -72,6 +72,8 @@ final class TokfenceAppViewModel: ObservableObject {
     @Published var isRefreshing = false
     @Published var lastError = ""
     @Published var showErrorToast = false
+    @Published var daemonIdentityMismatchError = ""
+    @Published var showDaemonIdentityMismatchDialog = false
     @Published var binaryPath: String = ""
     @Published var liveTailEnabled = true
     @Published var logProviderFilter = "all"
@@ -213,6 +215,7 @@ final class TokfenceAppViewModel: ObservableObject {
 
             self.snapshot = snapshot
             self.daemonStatus = status
+            self.updateDaemonIdentityWarning(status)
             self.logs = logs.sorted(by: { $0.timestamp > $1.timestamp })
             self.statsByProvider = statsByProvider
             self.statsByModel = statsByModel
@@ -223,6 +226,59 @@ final class TokfenceAppViewModel: ObservableObject {
             clearError()
         } catch {
             setError(error.localizedDescription)
+        }
+    }
+
+    func updateDaemonIdentityWarning(_ status: TokfenceDaemonStatus) {
+        let error = (status.error ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if status.running {
+            if !error.isEmpty {
+                setDaemonIdentityMismatch(message: error)
+                return
+            }
+            clearDaemonIdentityMismatch()
+            return
+        }
+        if isDaemonIdentityMismatchError(error) {
+            setDaemonIdentityMismatch(message: error)
+            return
+        }
+        clearDaemonIdentityMismatch()
+    }
+
+    func setDaemonIdentityMismatch(message: String) {
+        daemonIdentityMismatchError = message
+        showDaemonIdentityMismatchDialog = true
+    }
+
+    func clearDaemonIdentityMismatch() {
+        daemonIdentityMismatchError = ""
+        showDaemonIdentityMismatchDialog = false
+    }
+
+    func dismissDaemonIdentityMismatch() {
+        showDaemonIdentityMismatchDialog = false
+    }
+
+    func isDaemonIdentityMismatchError(_ message: String) -> Bool {
+        if message.isEmpty {
+            return false
+        }
+        let lower = message.lowercased()
+        return lower.contains("identity mismatch") || lower.contains("pid file owner mismatch")
+    }
+
+    func clearDaemonPIDFile() async {
+        do {
+            let pidPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".tokfence/tokfence.pid")
+            if FileManager.default.fileExists(atPath: pidPath.path) {
+                try FileManager.default.removeItem(at: pidPath)
+            }
+            clearDaemonIdentityMismatch()
+            await refreshAll()
+        } catch {
+            setError("failed to clear daemon pid file: \(error.localizedDescription)")
         }
     }
 
