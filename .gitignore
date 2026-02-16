@@ -3,6 +3,10 @@
 *.log
 *.pid
 
+# Xcode user-specific metadata
+*.xcuserstate
+xcuserdata/
+
 # Private prompt material
 .private/
 AGENTS.md
