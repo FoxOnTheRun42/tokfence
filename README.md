@@ -13,6 +13,7 @@ Tokfence is a local-first daemon and CLI that sits between AI tools and upstream
 - Budget enforcement (`daily`/`monthly`) with HTTP 429 responses.
 - Provider revocation and global `kill` / `unkill`.
 - Per-provider RPM rate limiting.
+- Key leak detector (`tokfence watch`) to compare provider-side usage vs Tokfence logs.
 - Native-looking macOS menu UI via SwiftBar widget integration.
 
 ## Quickstart
@@ -79,11 +80,51 @@ tokfence ratelimit clear <provider>
 
 # Shell integration
 tokfence env [--shell bash|zsh|fish] [--provider <provider>]
+tokfence provider set <provider> <upstream-url>
+tokfence setup openclaw [--provider <provider>] [--test]
+tokfence watch --period 24h --interval 15m
+tokfence watch --once --provider openai --usage-endpoint openai=https://api.openai.com/v1/dashboard/billing/usage?start_date=2026-02-16&end_date=2026-02-16
 
 # Desktop widget (SwiftBar)
 tokfence widget install [--refresh 20]
 tokfence widget render
 tokfence widget uninstall
+```
+
+OpenClaw helper example:
+
+```bash
+tokfence setup openclaw --provider openai --test --json
+```
+
+This returns:
+- the local proxy base URL for the selected provider
+- a ready-to-paste `config.yaml` line
+- readiness checks (`daemon_reachable`, `provider_has_key`) when `--test` is enabled
+
+## Key Leak Detector (`tokfence watch`)
+
+`tokfence watch` polls provider usage and reconciles it against local Tokfence logs for the same period.
+
+If remote usage is higher than local usage beyond your thresholds, Tokfence raises an alert. In continuous mode, it also flags idle-time remote movement (no local traffic for `--idle-window`, but remote usage still increases).
+
+Note: provider usage APIs may require organization/admin-scoped keys or billing permissions.
+
+Examples:
+
+```bash
+# one-shot check as JSON
+tokfence watch --once --provider anthropic --json
+
+# continuous monitor every 15 minutes for all vault-backed providers
+tokfence watch --period 24h --interval 15m
+
+# auto-revoke on suspected leak
+tokfence watch --period 24h --interval 15m --auto-revoke
+
+# endpoint override if provider usage API differs
+tokfence watch --provider openai \
+  --usage-endpoint openai=https://api.openai.com/v1/dashboard/billing/usage?start_date=2026-02-16&end_date=2026-02-16
 ```
 
 ## macOS Desktop UI (SwiftBar)

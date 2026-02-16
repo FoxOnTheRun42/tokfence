@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+@preconcurrency import UserNotifications
 import WidgetKit
 
 enum TokfenceLogStatusFilter: String, CaseIterable, Identifiable {
@@ -59,8 +60,37 @@ struct TokfenceProviderOverview: Identifiable, Hashable {
     var id: String { provider }
 }
 
+struct TokfenceSetupWizardResult {
+    let provider: String
+    let baseURL: String
+    let daemonReachable: Bool
+    let keyStored: Bool
+    let probe: TokfenceStreamingProbeResult
+    let logRecord: TokfenceLogRecord?
+
+    var logFound: Bool {
+        logRecord != nil
+    }
+
+    var tokensLogged: Bool {
+        guard let logRecord else { return false }
+        return (logRecord.inputTokens + logRecord.outputTokens) > 0
+    }
+
+    var costLogged: Bool {
+        guard let logRecord else { return false }
+        return logRecord.estimatedCostCents > 0
+    }
+}
+
 @MainActor
 final class TokfenceAppViewModel: ObservableObject {
+    private enum BudgetAlertLevel: Int {
+        case none = 0
+        case warning = 1
+        case exceeded = 2
+    }
+
     @Published var selectedSection: TokfenceSection = .dashboard
     @Published var snapshot: TokfenceSnapshot = TokfenceSharedStore.loadSnapshot()
     @Published var daemonStatus: TokfenceDaemonStatus = TokfenceDaemonStatus(running: false, pid: nil, addr: nil, started: nil, error: nil)
@@ -87,9 +117,19 @@ final class TokfenceAppViewModel: ObservableObject {
     private var refreshTaskInProgress = false
     private var logsRefreshInProgress = false
     private var toastDismissTask: Task<Void, Never>?
+    private var lastBudgetAlertLevel: BudgetAlertLevel = .none
+    private var lastBudgetAlertDay = ""
+
+    private let budgetWarningThreshold = 0.8
+    private let budgetAlertLevelDefaultsKey = "TokfenceDesktop.lastBudgetAlertLevel"
+    private let budgetAlertDayDefaultsKey = "TokfenceDesktop.lastBudgetAlertDay"
 
     init() {
         binaryPath = runner.configuredBinaryPath
+        let defaults = UserDefaults.standard
+        let rawLevel = defaults.integer(forKey: budgetAlertLevelDefaultsKey)
+        lastBudgetAlertLevel = BudgetAlertLevel(rawValue: rawLevel) ?? .none
+        lastBudgetAlertDay = defaults.string(forKey: budgetAlertDayDefaultsKey) ?? ""
     }
 
     var providers: [String] {
@@ -206,6 +246,7 @@ final class TokfenceAppViewModel: ObservableObject {
             isRefreshing = false
         }
         do {
+            let previousGlobalBudget = self.globalDailyBudget
             let snapshot = try runner.fetchSnapshot()
             let status = try runner.fetchStatus()
             let logs = try runner.fetchLogs(since: logTimeRange.rawValue)
@@ -223,6 +264,7 @@ final class TokfenceAppViewModel: ObservableObject {
             self.hourlyBuckets = try await loadHourlyBuckets()
             TokfenceSharedStore.saveSnapshot(snapshot)
             WidgetCenter.shared.reloadAllTimelines()
+            maybeNotifyBudgetThreshold(previous: previousGlobalBudget, current: self.globalDailyBudget)
             clearError()
         } catch {
             setError(error.localizedDescription)
@@ -330,8 +372,23 @@ final class TokfenceAppViewModel: ObservableObject {
         await runAndRefresh { try runner.clearBudget(provider: provider) }
     }
 
-    func addVaultKey(provider: String, key: String) async {
-        await runAndRefresh { try runner.addVaultKey(provider: provider, key: key) }
+    func addVaultKey(provider: String, key: String, endpoint: String?) async {
+        await runAndRefresh {
+            let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedProvider.isEmpty else {
+                throw NSError(
+                    domain: "TokfenceDesktop",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Provider name is required"]
+                )
+            }
+
+            let trimmedEndpoint = endpoint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedEndpoint.isEmpty {
+                try runner.setProviderEndpoint(provider: normalizedProvider, endpoint: trimmedEndpoint)
+            }
+            try runner.addVaultKey(provider: normalizedProvider, key: key)
+        }
     }
 
     func rotateVaultKey(provider: String, key: String) async {
@@ -344,6 +401,80 @@ final class TokfenceAppViewModel: ObservableObject {
 
     func shellSnippet() -> String {
         (try? runner.shellSnippet()) ?? "eval \"$(tokfence env)\""
+    }
+
+    func runSetupWizard(provider rawProvider: String, endpoint rawEndpoint: String?, key: String, model: String?) async throws -> TokfenceSetupWizardResult {
+        let provider = rawProvider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !provider.isEmpty else {
+            throw NSError(
+                domain: "TokfenceDesktop",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Provider name is required"]
+            )
+        }
+        let keyTrimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyTrimmed.isEmpty else {
+            throw NSError(
+                domain: "TokfenceDesktop",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "API key is required"]
+            )
+        }
+
+        var status = try runner.fetchStatus()
+        if !status.running {
+            try runner.startDaemon()
+            let deadline = Date().addingTimeInterval(8)
+            while Date() < deadline {
+                try await Task.sleep(nanoseconds: 350_000_000)
+                status = try runner.fetchStatus()
+                if status.running {
+                    break
+                }
+            }
+        }
+        guard status.running else {
+            throw NSError(
+                domain: "TokfenceDesktop",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Daemon did not become reachable in time"]
+            )
+        }
+        let daemonAddr = status.addr ?? snapshot.addr ?? "127.0.0.1:9471"
+
+        let endpoint = rawEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !endpoint.isEmpty {
+            try runner.setProviderEndpoint(provider: provider, endpoint: endpoint)
+        }
+
+        try runner.addVaultKey(provider: provider, key: keyTrimmed)
+
+        let existingLogs = try runner.fetchLogs(provider: provider, since: "1h")
+        let baselineIDs = Set(existingLogs.map(\.id))
+
+        let probe = try await runner.runStreamingProbe(provider: provider, daemonAddr: daemonAddr, model: model)
+
+        var newLog: TokfenceLogRecord?
+        let logDeadline = Date().addingTimeInterval(8)
+        while Date() < logDeadline {
+            let latest = try runner.fetchLogs(provider: provider, since: "1h")
+            if let match = latest.first(where: { !baselineIDs.contains($0.id) }) {
+                newLog = match
+                break
+            }
+            try await Task.sleep(nanoseconds: 350_000_000)
+        }
+
+        await refreshAll()
+
+        return TokfenceSetupWizardResult(
+            provider: provider,
+            baseURL: probe.baseURL,
+            daemonReachable: true,
+            keyStored: true,
+            probe: probe,
+            logRecord: newLog
+        )
     }
 
     func openDataFolder() {
@@ -431,5 +562,112 @@ final class TokfenceAppViewModel: ObservableObject {
         toastDismissTask = nil
         lastError = ""
         showErrorToast = false
+    }
+
+    private func budgetAlertLevel(for budget: TokfenceBudget?) -> BudgetAlertLevel {
+        guard let budget, budget.limitCents > 0 else {
+            return .none
+        }
+        let progress = Double(budget.currentSpendCents) / Double(max(1, budget.limitCents))
+        if progress >= 1 {
+            return .exceeded
+        }
+        if progress >= budgetWarningThreshold {
+            return .warning
+        }
+        return .none
+    }
+
+    private func dayKey(for date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+
+    private func persistBudgetAlertState() {
+        let defaults = UserDefaults.standard
+        defaults.set(lastBudgetAlertLevel.rawValue, forKey: budgetAlertLevelDefaultsKey)
+        defaults.set(lastBudgetAlertDay, forKey: budgetAlertDayDefaultsKey)
+    }
+
+    private func maybeNotifyBudgetThreshold(previous: TokfenceBudget?, current: TokfenceBudget?) {
+        let todayKey = dayKey()
+        if lastBudgetAlertDay != todayKey {
+            lastBudgetAlertDay = todayKey
+            lastBudgetAlertLevel = .none
+            persistBudgetAlertState()
+        }
+
+        let previousLevel = budgetAlertLevel(for: previous)
+        let baselineLevel: BudgetAlertLevel = previousLevel.rawValue > lastBudgetAlertLevel.rawValue ? previousLevel : lastBudgetAlertLevel
+        let currentLevel = budgetAlertLevel(for: current)
+        guard currentLevel.rawValue > baselineLevel.rawValue else {
+            return
+        }
+
+        guard let current, current.limitCents > 0 else {
+            return
+        }
+
+        let progress = Double(current.currentSpendCents) / Double(max(1, current.limitCents))
+        let percent = Int((progress * 100).rounded())
+        let title: String
+        let body: String
+        switch currentLevel {
+        case .warning:
+            title = "Tokfence budget warning"
+            body = "Daily budget is at \(percent)% (\(TokfenceFormatting.usd(cents: current.currentSpendCents)) / \(TokfenceFormatting.usd(cents: current.limitCents)))."
+        case .exceeded:
+            title = "Tokfence budget exceeded"
+            body = "Daily budget exceeded (\(TokfenceFormatting.usd(cents: current.currentSpendCents)) / \(TokfenceFormatting.usd(cents: current.limitCents))). Requests may be blocked."
+        case .none:
+            return
+        }
+
+        sendLocalNotification(title: title, body: body)
+        lastBudgetAlertLevel = currentLevel
+        lastBudgetAlertDay = todayKey
+        persistBudgetAlertState()
+    }
+
+    private func sendLocalNotification(title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { [weak self] settings in
+            guard let self else { return }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                Task { @MainActor in
+                    self.enqueueNotification(title: title, body: body)
+                }
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+                    guard let self else { return }
+                    guard granted else { return }
+                    Task { @MainActor in
+                        self.enqueueNotification(title: title, body: body)
+                    }
+                }
+            case .denied:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func enqueueNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "tokfence-budget-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }

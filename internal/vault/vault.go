@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -36,13 +37,18 @@ var supportedProviders = map[string]struct{}{
 	"groq":       {},
 }
 
+var providerNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
 func ValidateProvider(provider string) error {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return errors.New("provider is required")
+	}
 	if provider == "global" {
 		return nil
 	}
-	if _, ok := supportedProviders[provider]; !ok {
-		return fmt.Errorf("unsupported provider %q", provider)
+	if !providerNamePattern.MatchString(provider) {
+		return fmt.Errorf("invalid provider %q (use lowercase letters, numbers, '-' or '_')", provider)
 	}
 	return nil
 }

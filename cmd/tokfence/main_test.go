@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/macfox/tokfence/internal/config"
 )
 
 func withFakePSOutput(t *testing.T, output string) {
@@ -85,5 +88,88 @@ func TestVerifyDaemonProcessRejectsNonceMismatch(t *testing.T) {
 	withFakePSOutput(t, parentShell+" --tokfence-daemon-nonce=expected-token")
 	if err := verifyDaemonProcess(state); err != nil {
 		t.Fatalf("expected nonce match to be accepted, got %v", err)
+	}
+}
+
+type fakeVault struct {
+	providers []string
+}
+
+func (f fakeVault) Get(context.Context, string) (string, error) { return "", nil }
+func (f fakeVault) Set(context.Context, string, string) error   { return nil }
+func (f fakeVault) Delete(context.Context, string) error        { return nil }
+func (f fakeVault) List(context.Context) ([]string, error) {
+	return append([]string{}, f.providers...), nil
+}
+
+func TestParseRemoteUsageTotalsOpenAIDashboard(t *testing.T) {
+	payload := []byte(`{"total_usage":1234}`)
+	usage, err := parseRemoteUsageTotals(payload)
+	if err != nil {
+		t.Fatalf("parse usage failed: %v", err)
+	}
+	if !usage.CostKnown {
+		t.Fatalf("expected cost to be known")
+	}
+	if usage.CostCents != 1234 {
+		t.Fatalf("cost cents = %d, want 1234", usage.CostCents)
+	}
+	if usage.CostUSD != "$12.34" {
+		t.Fatalf("cost usd = %q, want $12.34", usage.CostUSD)
+	}
+}
+
+func TestParseRemoteUsageTotalsTokenAndCostSum(t *testing.T) {
+	payload := []byte(`{
+		"data":[
+			{"input_tokens":100,"output_tokens":20,"cost_usd":0.5,"requests":2},
+			{"input_tokens":70,"completion_tokens":10,"cost_usd":0.3,"requests":1}
+		]
+	}`)
+	usage, err := parseRemoteUsageTotals(payload)
+	if err != nil {
+		t.Fatalf("parse usage failed: %v", err)
+	}
+	if usage.InputTokens != 170 {
+		t.Fatalf("input tokens = %d, want 170", usage.InputTokens)
+	}
+	if usage.OutputTokens != 30 {
+		t.Fatalf("output tokens = %d, want 30", usage.OutputTokens)
+	}
+	if usage.RequestCount != 3 {
+		t.Fatalf("request count = %d, want 3", usage.RequestCount)
+	}
+	if usage.CostCents != 80 {
+		t.Fatalf("cost cents = %d, want 80", usage.CostCents)
+	}
+}
+
+func TestParseCustomUsageEndpointFlags(t *testing.T) {
+	endpoints, err := parseCustomUsageEndpointFlags([]string{
+		"openai=https://example.com/usage",
+		"anthropic=https://api.anthropic.com/v1/usage",
+	})
+	if err != nil {
+		t.Fatalf("parse custom usage endpoints failed: %v", err)
+	}
+	if endpoints["openai"] != "https://example.com/usage" {
+		t.Fatalf("openai endpoint mismatch: %q", endpoints["openai"])
+	}
+	if endpoints["anthropic"] != "https://api.anthropic.com/v1/usage" {
+		t.Fatalf("anthropic endpoint mismatch: %q", endpoints["anthropic"])
+	}
+}
+
+func TestResolveWatchProvidersFromVault(t *testing.T) {
+	cfg := config.Default()
+	providers, err := resolveWatchProviders(nil, cfg, fakeVault{providers: []string{"openai", "anthropic"}})
+	if err != nil {
+		t.Fatalf("resolve providers failed: %v", err)
+	}
+	if len(providers) != 2 {
+		t.Fatalf("provider count = %d, want 2", len(providers))
+	}
+	if providers[0] != "anthropic" || providers[1] != "openai" {
+		t.Fatalf("unexpected provider order: %v", providers)
 	}
 }

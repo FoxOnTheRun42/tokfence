@@ -1,5 +1,15 @@
 import Foundation
 
+struct TokfenceStreamingProbeResult {
+    let provider: String
+    let baseURL: String
+    let statusCode: Int
+    let contentType: String
+    let streamChunkReceived: Bool
+    let firstChunkMS: Int?
+    let responsePreview: String
+}
+
 struct TokfenceCommandRunner {
     private let binaryPathKey = "tokfence.desktop.binaryPath"
     private let commandTimeout: TimeInterval = 8.0
@@ -120,6 +130,10 @@ struct TokfenceCommandRunner {
         _ = try run(arguments: ["vault", "add", provider, "-"], stdin: key + "\n")
     }
 
+    func setProviderEndpoint(provider: String, endpoint: String) throws {
+        _ = try run(arguments: ["provider", "set", provider, endpoint])
+    }
+
     func rotateVaultKey(provider: String, key: String) throws {
         _ = try run(arguments: ["vault", "rotate", provider, "-"], stdin: key + "\n")
     }
@@ -129,11 +143,104 @@ struct TokfenceCommandRunner {
     }
 
     func shellSnippet() throws -> String {
-        try run(arguments: ["env"])
+        let snippet = try run(arguments: ["env"])
+        return normalizeShellSnippet(snippet)
     }
 
     func runAction(arguments: [String]) throws {
         _ = try run(arguments: arguments)
+    }
+
+    func runStreamingProbe(provider rawProvider: String, daemonAddr: String, model: String?) async throws -> TokfenceStreamingProbeResult {
+        let provider = rawProvider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !provider.isEmpty else {
+            throw NSError(
+                domain: "TokfenceCommandRunner",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "provider is required for streaming probe"]
+            )
+        }
+
+        guard provider != "google" else {
+            throw NSError(
+                domain: "TokfenceCommandRunner",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "automatic streaming probe for google is not supported yet"]
+            )
+        }
+
+        let hostPort = normalizeHostPort(daemonAddr)
+        let baseURL = "http://\(hostPort)/\(provider)"
+        let (path, bodyData) = try probeRequest(provider: provider, model: model)
+
+        guard let url = URL(string: baseURL + path) else {
+            throw NSError(
+                domain: "TokfenceCommandRunner",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "invalid probe URL for provider \(provider)"]
+            )
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 25
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.httpBody = bodyData
+
+        let startedAt = Date()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 25
+        configuration.timeoutIntervalForResource = 25
+        let session = URLSession(configuration: configuration)
+        let (bytes, response) = try await session.bytes(for: request)
+
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "TokfenceCommandRunner",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "streaming probe returned non-HTTP response"]
+            )
+        }
+
+        var streamChunkReceived = false
+        var firstChunkMS: Int?
+        var previewLines: [String] = []
+        var inspectedLines = 0
+
+        for try await line in bytes.lines {
+            inspectedLines += 1
+
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty && previewLines.count < 6 {
+                previewLines.append(trimmed)
+            }
+
+            if line.hasPrefix("data:") && !line.hasPrefix("data: [DONE]") {
+                streamChunkReceived = true
+                firstChunkMS = Int(Date().timeIntervalSince(startedAt) * 1000.0)
+                break
+            }
+
+            if inspectedLines >= 160 {
+                break
+            }
+
+            if http.statusCode >= 400 && previewLines.joined(separator: " ").count > 420 {
+                break
+            }
+        }
+
+        let preview = previewLines.joined(separator: "\n")
+        return TokfenceStreamingProbeResult(
+            provider: provider,
+            baseURL: baseURL,
+            statusCode: http.statusCode,
+            contentType: http.value(forHTTPHeaderField: "Content-Type") ?? "",
+            streamChunkReceived: streamChunkReceived,
+            firstChunkMS: firstChunkMS,
+            responsePreview: preview
+        )
     }
 
     private func runJSON<T: Decodable>(_ arguments: [String], decode type: T.Type) throws -> T {
@@ -267,5 +374,100 @@ struct TokfenceCommandRunner {
             return detected
         }
         return "/opt/homebrew/bin/tokfence"
+    }
+
+    private func normalizeHostPort(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("http://") || value.hasPrefix("https://"), let url = URL(string: value), let host = url.host {
+            if let port = url.port {
+                return "\(host):\(port)"
+            }
+            return host
+        }
+        if value.contains("/") {
+            return value.replacingOccurrences(of: "http://", with: "")
+                .replacingOccurrences(of: "https://", with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
+        return value
+    }
+
+    private func probeRequest(provider: String, model: String?) throws -> (path: String, bodyData: Data) {
+        let selectedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        if provider == "anthropic" {
+            let payload: [String: Any] = [
+                "model": selectedModel.isEmpty ? "claude-3-5-haiku-latest" : selectedModel,
+                "max_tokens": 24,
+                "stream": true,
+                "messages": [
+                    ["role": "user", "content": "Reply with the single word OK."]
+                ]
+            ]
+            return ("/v1/messages", try encodeJSONObject(payload))
+        }
+
+        let defaultModel: String
+        switch provider {
+        case "openai":
+            defaultModel = "gpt-4o-mini"
+        case "groq":
+            defaultModel = "llama-3.1-8b-instant"
+        case "mistral":
+            defaultModel = "mistral-small-latest"
+        case "openrouter":
+            defaultModel = "openai/gpt-4o-mini"
+        default:
+            defaultModel = "gpt-4o-mini"
+        }
+
+        let payload: [String: Any] = [
+            "model": selectedModel.isEmpty ? defaultModel : selectedModel,
+            "messages": [
+                ["role": "user", "content": "Reply with the single word OK."]
+            ],
+            "max_tokens": 24,
+            "stream": true
+        ]
+        return ("/v1/chat/completions", try encodeJSONObject(payload))
+    }
+
+    private func encodeJSONObject(_ object: [String: Any]) throws -> Data {
+        do {
+            return try JSONSerialization.data(withJSONObject: object, options: [])
+        } catch {
+            throw NSError(
+                domain: "TokfenceCommandRunner",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "failed to encode streaming probe payload: \(error.localizedDescription)"]
+            )
+        }
+    }
+
+    private func normalizeShellSnippet(_ snippet: String) -> String {
+        snippet
+            .split(whereSeparator: \.isNewline)
+            .map { line in
+                let text = String(line)
+                if text.hasPrefix("export "), let idx = text.firstIndex(of: "=") {
+                    let keyStart = text.index(text.startIndex, offsetBy: 7)
+                    let key = text[keyStart..<idx]
+                        .replacingOccurrences(of: " ", with: "_")
+                    let value = text[idx...]
+                    return "export \(key)\(value)"
+                }
+                if text.hasPrefix("set -x ") {
+                    let parts = text.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
+                    if parts.count >= 3 {
+                        let normalized = parts[2].replacingOccurrences(of: " ", with: "_")
+                        if parts.count == 4 {
+                            return "set -x \(normalized) \(parts[3])"
+                        }
+                        return "set -x \(normalized)"
+                    }
+                }
+                return text
+            }
+            .joined(separator: "\n")
     }
 }

@@ -8,10 +8,11 @@ struct TokfenceDesktopApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(viewModel: viewModel)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: TokfenceTheme.minWindowWidth, minHeight: TokfenceTheme.minWindowHeight)
                 .task { viewModel.start() }
                 .onDisappear { viewModel.stop() }
         }
+        .defaultSize(width: TokfenceTheme.preferredWindowWidth, height: TokfenceTheme.preferredWindowHeight)
         .commands {
             TokfenceAppCommands(viewModel: viewModel)
         }
@@ -20,7 +21,7 @@ struct TokfenceDesktopApp: App {
             TokfenceMenuBarView(viewModel: viewModel)
                 .frame(width: 280)
         } label: {
-            Image(systemName: viewModel.snapshot.running ? "lock.shield.fill" : "lock.slash")
+            Image(systemName: viewModel.snapshot.running ? "hexagon.fill" : "hexagon")
         }
     }
 }
@@ -66,12 +67,11 @@ private struct TokfenceMenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                TokfenceStatusDot(
-                    color: viewModel.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger,
-                    label: viewModel.snapshot.running ? "Online" : "Offline"
-                )
+                Text(viewModel.snapshot.running ? "\u{25CF} Online" : "\u{25CF} Offline")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(viewModel.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
                 Spacer()
-                Text(TokfenceFormatting.usd(cents: viewModel.snapshot.todayCostCents))
+                Text("\(TokfenceFormatting.usd(cents: viewModel.snapshot.todayCostCents)) today")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
             }
 
@@ -87,11 +87,6 @@ private struct TokfenceMenuBarView: View {
 
             Divider()
 
-            Button("Refresh") {
-                Task { await viewModel.refreshAll() }
-            }
-            .buttonStyle(.plain)
-
             Button(viewModel.snapshot.running ? "Stop Daemon" : "Start Daemon") {
                 Task {
                     if viewModel.snapshot.running {
@@ -103,7 +98,7 @@ private struct TokfenceMenuBarView: View {
             }
             .buttonStyle(.plain)
 
-            Button(viewModel.snapshot.killSwitchActive ? "Kill Switch: ON" : "Kill Switch: OFF") {
+            Button(viewModel.snapshot.killSwitchActive ? "Kill switch: ON" : "Kill switch: OFF") {
                 Task {
                     if viewModel.snapshot.killSwitchActive {
                         await viewModel.killSwitchOff()

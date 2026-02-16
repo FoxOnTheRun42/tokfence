@@ -17,6 +17,25 @@ struct TokfenceCard<Content: View>: View {
     }
 }
 
+struct TokfenceSurface<Content: View>: View {
+    let content: Content
+    let padding: CGFloat
+
+    init(padding: CGFloat = 16, @ViewBuilder content: () -> Content) {
+        self.padding = padding
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TokfenceTheme.spaceMd) {
+            content
+        }
+        .padding(padding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TokfenceTheme.bgSecondary, in: RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous))
+    }
+}
+
 struct TokfenceSectionHeader: View {
     let title: String
     var subtitle: String?
@@ -36,6 +55,23 @@ struct TokfenceSectionHeader: View {
             }
             Spacer()
             trailing
+        }
+    }
+}
+
+struct TokfenceSectionRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: TokfenceTheme.fontBody, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.system(size: TokfenceTheme.fontBody, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
         }
     }
 }
@@ -194,5 +230,92 @@ struct TokfenceEmptyState: View {
         .frame(maxWidth: .infinity)
         .padding(24)
         .background(TokfenceTheme.bgSecondary, in: RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous))
+    }
+}
+
+struct TokfenceNavItem: View {
+    let isSelected: Bool
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: TokfenceTheme.spaceSm) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .frame(width: 16)
+                    .foregroundStyle(isSelected ? TokfenceTheme.accentPrimary : TokfenceTheme.textTertiary)
+                Text(title)
+                    .font(.system(size: TokfenceTheme.fontBody, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? TokfenceTheme.textPrimary : TokfenceTheme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
+                    .fill(isSelected ? TokfenceTheme.accentMuted : TokfenceTheme.bgTertiary)
+            )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+    }
+}
+
+struct TokfenceMetricCard: View {
+    let icon: String
+    let value: String
+    let title: String
+    let subtitle: String
+    var trend: String = ""
+
+    var body: some View {
+        TokfenceCard {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.accentPrimary)
+                Spacer()
+            }
+            Text(value)
+                .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+            Text(subtitle)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(TokfenceTheme.textTertiary)
+            if !trend.isEmpty {
+                Text(trend)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+            }
+        }
+        .frame(height: 140)
+    }
+}
+
+struct TokfenceStatusBadge: View {
+    let label: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(tint)
+                .frame(width: 8, height: 8)
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
+                .fill(TokfenceTheme.textTertiary.opacity(0.18))
+        )
     }
 }

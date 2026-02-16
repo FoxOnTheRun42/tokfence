@@ -1,6 +1,12 @@
 import SwiftUI
 
 enum TokfenceTheme {
+    static let minWindowWidth: CGFloat = 900
+    static let minWindowHeight: CGFloat = 600
+    static let preferredWindowWidth: CGFloat = 1100
+    static let preferredWindowHeight: CGFloat = 720
+    static let sidebarWidth: CGFloat = 200
+
     static let bgPrimary = Color(light: 0xFFFFFF, dark: 0x1C1C1E)
     static let bgSecondary = Color(light: 0xF5F5F7, dark: 0x2C2C2E)
     static let bgTertiary = Color(light: 0xE8E8ED, dark: 0x3A3A3C)
@@ -29,9 +35,17 @@ enum TokfenceTheme {
     static let spaceLg: CGFloat = 24
     static let spaceXl: CGFloat = 32
 
+    static let fontHeadline: CGFloat = 20
+    static let fontTitle: CGFloat = 16
+    static let fontBody: CGFloat = 13
+    static let fontCaption: CGFloat = 11
+    static let fontMono: CGFloat = 12
+
+    static let animationDuration: Double = 0.2
     static let sectionTransition = AnyTransition.opacity.combined(with: .move(edge: .trailing))
     static let navTransition = AnyTransition.move(edge: .leading).combined(with: .opacity)
-    static let uiAnimation = Animation.easeInOut(duration: 0.2)
+    static let uiAnimation = Animation.easeInOut(duration: animationDuration)
+    static let uiSpring = Animation.interpolatingSpring(stiffness: 260, damping: 24)
 
     static func statusColor(for statusCode: Int) -> Color {
         if statusCode >= 200 && statusCode < 300 {

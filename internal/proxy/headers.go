@@ -52,7 +52,7 @@ func ApplyProviderAuth(headers http.Header, provider, key string) error {
 	case "google":
 		headers.Set("x-goog-api-key", key)
 	default:
-		return fmt.Errorf("unsupported provider %q", provider)
+		headers.Set("Authorization", "Bearer "+key)
 	}
 	return nil
 }

@@ -8,36 +8,38 @@ struct ContentView: View {
     var body: some View {
         HStack(spacing: 0) {
             sidebar
-                .frame(width: 220)
+                .frame(width: TokfenceTheme.sidebarWidth)
                 .background(TokfenceTheme.bgSecondary)
-                .animation(TokfenceTheme.uiAnimation, value: viewModel.selectedSection)
-
-            Divider()
+                .overlay(
+                    Divider().offset(x: TokfenceTheme.sidebarWidth),
+                    alignment: .trailing
+                )
 
             mainContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .animation(TokfenceTheme.uiAnimation, value: viewModel.selectedSection)
                 .background(TokfenceTheme.bgPrimary)
-        }
-        .overlay(alignment: .top) {
-            if !viewModel.lastError.isEmpty && viewModel.showErrorToast {
-                TokfenceToast(
-                    message: viewModel.lastError,
-                    tone: TokfenceTheme.danger,
-                    action: nil,
-                    onClose: {
-                        withAnimation(TokfenceTheme.uiAnimation) {
-                            viewModel.dismissErrorToast()
-                        }
+                .animation(TokfenceTheme.uiAnimation, value: viewModel.selectedSection)
+                .overlay(alignment: .top) {
+                    if !viewModel.lastError.isEmpty && viewModel.showErrorToast {
+                        TokfenceToast(
+                            message: viewModel.lastError,
+                            tone: TokfenceTheme.danger,
+                            action: nil,
+                            onClose: {
+                                withAnimation(TokfenceTheme.uiAnimation) {
+                                    viewModel.dismissErrorToast()
+                                }
+                            }
+                        )
+                        .padding(.top, 8)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: 320)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(1)
                     }
-                )
-                .padding(.top, 8)
-                .padding(.horizontal, 12)
-                .frame(maxWidth: 300)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .zIndex(1)
-            }
+                }
         }
+        .animation(TokfenceTheme.uiAnimation, value: viewModel.selectedSection)
         .alert("Daemon identity mismatch", isPresented: $viewModel.showDaemonIdentityMismatchDialog) {
             Button("Retry") {
                 Task { await viewModel.refreshAll() }
@@ -51,97 +53,60 @@ struct ContentView: View {
         } message: {
             Text(viewModel.daemonIdentityMismatchError)
         }
-        .animation(TokfenceTheme.uiAnimation, value: viewModel.showErrorToast)
         .background(TokfenceTheme.bgPrimary)
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(TokfenceTheme.accentPrimary)
-                    .frame(width: 24, height: 24)
-                    .overlay {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
+            HStack(spacing: TokfenceTheme.spaceSm) {
+                TokfenceLogoMark()
                 Text("Tokfence")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(TokfenceTheme.textPrimary)
                 Spacer(minLength: 0)
-                Menu {
-                    Button("Refresh") { Task { await viewModel.refreshAll() } }
-                    Divider()
-                    Button("Start Daemon") { Task { await viewModel.startDaemon() } }
-                    Button("Stop Daemon") { Task { await viewModel.stopDaemon() } }
-                } label: {
-                    Circle()
-                        .fill(viewModel.snapshot.killSwitchActive ? TokfenceTheme.danger : (viewModel.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger))
-                        .frame(width: 10, height: 10)
-                }
-                .menuStyle(.borderlessButton)
-                .help("Daemon controls")
+                DaemonStatusMenu(viewModel: viewModel)
             }
-            .padding(.top, 6)
+            .frame(height: 32)
 
-                ForEach(TokfenceSection.allCases) { section in
-                    Button {
-                        withAnimation(TokfenceTheme.uiAnimation) {
-                            viewModel.selectedSection = section
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: section.symbol)
-                                .font(.system(size: 13, weight: .medium))
-                            .frame(width: 16)
-                        Text(section.title)
-                            .font(.system(size: 13, weight: viewModel.selectedSection == section ? .semibold : .medium))
-                        Spacer(minLength: 0)
+            Divider()
+
+            ForEach(TokfenceSection.allCases) { section in
+                TokfenceNavItem(
+                    isSelected: viewModel.selectedSection == section,
+                    title: section.title,
+                    icon: section.symbol
+                ) {
+                    withAnimation(TokfenceTheme.uiSpring) {
+                        viewModel.selectedSection = section
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 10)
-                    .foregroundStyle(viewModel.selectedSection == section ? TokfenceTheme.accentPrimary : TokfenceTheme.textPrimary)
-                    .background(
-                        RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
-                            .fill(viewModel.selectedSection == section ? TokfenceTheme.accentMuted : Color.clear)
-                    )
                 }
-                .buttonStyle(.plain)
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: TokfenceTheme.spaceMd)
 
             if viewModel.snapshot.killSwitchActive {
-                Text("KILLED")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(TokfenceTheme.danger, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                TokfenceStatusBadge(
+                    label: "KILLED",
+                    icon: "bolt.slash.fill",
+                    tint: TokfenceTheme.danger
+                )
             }
 
-            TokfenceCard {
-                Text("Today")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(TokfenceTheme.textSecondary)
-                if let budget = viewModel.globalDailyBudget {
-                    Text("\(TokfenceFormatting.usd(cents: budget.currentSpendCents)) / \(TokfenceFormatting.usd(cents: budget.limitCents))")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-                    TokfenceBudgetProgressBar(current: budget.currentSpendCents, limit: budget.limitCents)
-                } else {
-                    Text(TokfenceFormatting.usd(cents: viewModel.snapshot.todayCostCents))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-                    Text("No daily budget configured")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(TokfenceTheme.textSecondary)
-                }
+            let budget = viewModel.globalDailyBudget
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Today \(TokfenceFormatting.usd(cents: budget?.currentSpendCents ?? viewModel.snapshot.todayCostCents)) / \(TokfenceFormatting.usd(cents: budget?.limitCents ?? max(1, viewModel.snapshot.todayCostCents + 1)))")
+                    .font(.system(size: TokfenceTheme.fontCaption, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textPrimary)
+                TokfenceBudgetProgressBar(
+                    current: budget?.currentSpendCents ?? viewModel.snapshot.todayCostCents,
+                    limit: max(budget?.limitCents ?? 1, 1)
+                )
             }
+            .padding(12)
+            .background(TokfenceTheme.bgSecondary, in: RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous))
         }
-        .padding(.vertical, 16)
-        .padding(.horizontal, 12)
+        .padding(.top, 24)
+        .padding(.horizontal, 16)
     }
 
     @ViewBuilder
@@ -163,18 +128,239 @@ struct ContentView: View {
             }
         }
         .id(viewModel.selectedSection)
+        .padding(24)
+        .transition(.opacity)
     }
 }
 
+private struct TokfenceLogoMark: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(TokfenceTheme.accentPrimary)
+            .frame(width: 24, height: 24)
+            .overlay {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+    }
+}
+
+private struct DaemonStatusMenu: View {
+    @ObservedObject var viewModel: TokfenceAppViewModel
+
+    private var statusColor: Color {
+        if viewModel.snapshot.killSwitchActive {
+            return TokfenceTheme.danger
+        }
+        return viewModel.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.textTertiary
+    }
+
+    var body: some View {
+        Menu {
+            Button("Refresh status") { Task { await viewModel.refreshAll() } }
+            Button(viewModel.snapshot.running ? "Stop daemon" : "Start daemon") {
+                Task {
+                    if viewModel.snapshot.running {
+                        await viewModel.stopDaemon()
+                    } else {
+                        await viewModel.startDaemon()
+                    }
+                }
+            }
+            Divider()
+            Button("Restart daemon") {
+                Task {
+                    await viewModel.stopDaemon()
+                    await viewModel.startDaemon()
+                }
+            }
+            Divider()
+            Button("Open data folder") {
+                viewModel.openDataFolder()
+            }
+        } label: {
+            Circle()
+                .fill(statusColor)
+                .overlay(
+                    Circle()
+                        .stroke(TokfenceTheme.bgPrimary, lineWidth: 1.5)
+                )
+                .frame(width: 10, height: 10)
+        }
+        .menuStyle(.borderlessButton)
+        .help("Daemon controls")
+    }
+}
+
+private struct RequestListRow: View {
+    let record: TokfenceLogRecord
+    let index: Int
+    let isSelected: Bool
+    let isCompact: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(TokfenceFormatting.timeOfDay(record.timestamp))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+                .frame(width: 70, alignment: .leading)
+
+            TokfenceProviderBadge(provider: record.provider, active: true)
+                .frame(width: 80, alignment: .leading)
+
+            Text(record.model.isEmpty ? "(unknown)" : record.model)
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+                .lineLimit(1)
+                .frame(width: isCompact ? 140 : 180, alignment: .leading)
+
+            Text("\(TokfenceFormatting.tokens(record.inputTokens)) → \(TokfenceFormatting.tokens(record.outputTokens))")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+                .frame(width: 94, alignment: .trailing)
+
+            Text(TokfenceFormatting.usd(cents: record.estimatedCostCents))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+                .frame(width: 64, alignment: .trailing)
+
+            Text(TokfenceFormatting.latency(ms: record.latencyMS))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+                .frame(width: 64, alignment: .trailing)
+
+            Circle()
+                .fill(TokfenceTheme.statusColor(for: record.statusCode))
+                .frame(width: 8, height: 8)
+                .frame(width: isCompact ? 50 : 56, alignment: .leading)
+                .accessibilityLabel("status \(record.statusCode)")
+
+            if !isCompact {
+                HStack(spacing: 4) {
+                    if record.isStreaming {
+                        Image(systemName: "waveform")
+                    }
+                    Text(record.isStreaming ? "stream" : "batch")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .foregroundStyle(TokfenceTheme.textSecondary)
+                .frame(width: 70, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 32)
+        .background(rowFill, in: RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous))
+        .contentShape(Rectangle())
+    }
+
+    private var rowFill: Color {
+        if isSelected {
+            return TokfenceTheme.accentMuted
+        }
+        if index % 2 == 0 {
+            return TokfenceTheme.bgSecondary
+        }
+        return TokfenceTheme.bgTertiary.opacity(0.4)
+    }
+}
+
+private struct RequestListPanel: View {
+    let records: [TokfenceLogRecord]
+    @Binding var selectedRequestID: String?
+    var compact: Bool = false
+
+    var body: some View {
+        let displayRecords = compact ? Array(records.prefix(3)) : records
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Time")
+                    .frame(width: 70, alignment: .leading)
+                Text("Provider")
+                    .frame(width: 80, alignment: .leading)
+                Text("Model")
+                    .frame(width: compact ? 140 : 180, alignment: .leading)
+                Text("Tokens")
+                    .frame(width: 94, alignment: .trailing)
+                Text("Cost")
+                    .frame(width: 64, alignment: .trailing)
+                Text("Latency")
+                    .frame(width: 64, alignment: .trailing)
+                Text("Status")
+                    .frame(width: compact ? 50 : 56, alignment: .leading)
+                if !compact {
+                    Text("Type")
+                        .frame(width: 70, alignment: .leading)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(TokfenceTheme.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(TokfenceTheme.bgTertiary, in: RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous))
+
+            Group {
+                if compact {
+                    VStack(spacing: 8) {
+                        ForEach(Array(displayRecords.enumerated()), id: \.element.id) { index, record in
+                            Button {
+                                withAnimation(TokfenceTheme.uiSpring) {
+                                    selectedRequestID = record.id
+                                }
+                            } label: {
+                                RequestListRow(
+                                    record: record,
+                                    index: index,
+                                    isSelected: selectedRequestID == record.id,
+                                    isCompact: compact
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(Array(displayRecords.enumerated()), id: \.element.id) { index, record in
+                                Button {
+                                    withAnimation(TokfenceTheme.uiSpring) {
+                                        selectedRequestID = record.id
+                                    }
+                                } label: {
+                                    RequestListRow(
+                                        record: record,
+                                        index: index,
+                                        isSelected: selectedRequestID == record.id,
+                                        isCompact: compact
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
 private struct DashboardSectionView: View {
     @ObservedObject var viewModel: TokfenceAppViewModel
     @State private var selectedRequestID: String?
 
     private struct ChartPoint: Identifiable {
-        let id = UUID()
-        let hour: Date
+        let hourStart: Date
         let provider: String
         let count: Int
+
+        var id: String {
+            let ts = Int(hourStart.timeIntervalSince1970)
+            return "\(provider)-\(ts)"
+        }
     }
 
     private var chartPoints: [ChartPoint] {
@@ -183,11 +369,21 @@ private struct DashboardSectionView: View {
             for provider in viewModel.providers {
                 let count = bucket.counts[provider, default: 0]
                 if count > 0 {
-                    points.append(ChartPoint(hour: bucket.hourStart, provider: provider, count: count))
+                    points.append(ChartPoint(hourStart: bucket.hourStart, provider: provider, count: count))
                 }
             }
         }
         return points
+    }
+
+    private var chartDomain: ClosedRange<Date>? {
+        guard
+            let first = viewModel.hourlyBuckets.first?.hourStart,
+            let last = viewModel.hourlyBuckets.last?.hourStart
+        else {
+            return nil
+        }
+        return first ... last.addingTimeInterval(3600)
     }
 
     private var medianLatencyMS: Int {
@@ -196,133 +392,38 @@ private struct DashboardSectionView: View {
         return values[values.count / 2]
     }
 
+    private var averageHourlyRequests: Double {
+        guard !viewModel.hourlyBuckets.isEmpty else { return 0 }
+        let total = viewModel.hourlyBuckets.reduce(0) { $0 + $1.totalCount }
+        return Double(total) / Double(viewModel.hourlyBuckets.count)
+    }
+
+    private var requestsTrendText: String {
+        let calendar = Calendar.current
+        let startToday = calendar.startOfDay(for: Date())
+        guard let startYesterday = calendar.date(byAdding: .day, value: -1, to: startToday) else {
+            return ""
+        }
+        let yesterday = viewModel.logs.filter {
+            $0.timestamp >= startYesterday && $0.timestamp < startToday
+        }.count
+        let today = viewModel.snapshot.todayRequests
+        if yesterday <= 0 {
+            return "n/a vs yesterday"
+        }
+        let pct = ((Double(today - yesterday) / Double(yesterday)) * 100.0).rounded()
+        let prefix = pct >= 0 ? "+" : ""
+        return "\(prefix)\(Int(pct))% vs yesterday"
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                TokfenceSectionHeader(
-                    title: "Dashboard",
-                    subtitle: "What happened today"
-                , trailing: AnyView(
-                    Button {
-                        Task { await viewModel.refreshAll() }
-                    } label: {
-                        if viewModel.isRefreshing {
-                            ProgressView()
-                        } else {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                ))
-
-                HStack(spacing: 12) {
-                    metricCard(title: "Requests", value: "\(viewModel.snapshot.todayRequests)", subtitle: "today", icon: "arrow.up.arrow.down")
-                    metricCard(title: "Tokens", value: "\(TokfenceFormatting.tokens(viewModel.snapshot.todayInputTokens + viewModel.snapshot.todayOutputTokens))", subtitle: "in + out", icon: "textformat.123")
-                    metricCard(title: "Cost", value: TokfenceFormatting.usd(cents: viewModel.snapshot.todayCostCents), subtitle: "estimated today", icon: "dollarsign.circle")
-                    metricCard(title: "Latency", value: TokfenceFormatting.latency(ms: medianLatencyMS), subtitle: "median p50", icon: "clock")
-                }
-
-                TokfenceCard {
-                    Text("Activity (24h)")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-
-                    if chartPoints.isEmpty {
-                        TokfenceEmptyState(
-                            symbol: "chart.bar",
-                            title: "No activity yet",
-                            message: "Start an AI agent and point it to localhost:9471.",
-                            actionTitle: nil,
-                            action: nil
-                        )
-                    } else {
-                        Chart(chartPoints) { point in
-                            BarMark(
-                                x: .value("Hour", point.hour, unit: .hour),
-                                y: .value("Requests", point.count)
-                            )
-                            .foregroundStyle(by: .value("Provider", TokfenceFormatting.providerLabel(point.provider)))
-                        }
-                        .frame(height: 180)
-                        .chartXAxis {
-                            AxisMarks(values: .stride(by: .hour, count: 4)) { _ in
-                                AxisGridLine()
-                                AxisTick()
-                                AxisValueLabel(format: .dateTime.hour())
-                            }
-                        }
-                        .chartLegend(position: .bottom, spacing: 10)
-                    }
-                }
-
-                TokfenceCard {
-                    Text("Recent Requests")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-
-                    if viewModel.logs.isEmpty {
-                        TokfenceEmptyState(
-                            symbol: "list.bullet.rectangle",
-                            title: "No requests recorded yet",
-                            message: "Requests will appear here after your first proxied call.",
-                            actionTitle: nil,
-                            action: nil
-                        )
-                    } else {
-                        Table(viewModel.logs.prefix(20), selection: $selectedRequestID) {
-                            TableColumn("Time") { record in
-                                Text(TokfenceFormatting.timeOfDay(record.timestamp))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(TokfenceTheme.textSecondary)
-                            }
-                            .width(76)
-
-                            TableColumn("Provider") { record in
-                                TokfenceProviderBadge(provider: record.provider, active: true)
-                            }
-                            .width(90)
-
-                            TableColumn("Model") { record in
-                                Text(record.model.isEmpty ? "(unknown)" : record.model)
-                                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                                    .lineLimit(1)
-                            }
-                            .width(min: 120, ideal: 180)
-
-                            TableColumn("Tokens") { record in
-                                Text("\(TokfenceFormatting.tokens(record.inputTokens)) -> \(TokfenceFormatting.tokens(record.outputTokens))")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(110)
-
-                            TableColumn("Cost") { record in
-                                Text(TokfenceFormatting.usd(cents: record.estimatedCostCents))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(70)
-
-                            TableColumn("Latency") { record in
-                                Text(TokfenceFormatting.latency(ms: record.latencyMS))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(70)
-
-                            TableColumn("Status") { record in
-                                Circle()
-                                    .fill(TokfenceTheme.statusColor(for: record.statusCode))
-                                    .frame(width: 8, height: 8)
-                            }
-                            .width(50)
-                        }
-                        .frame(minHeight: 240)
-                        .onChange(of: selectedRequestID) { _, newValue in
-                            guard let newValue else { return }
-                            selectedRequestID = newValue
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 24) {
+                dashboardHeader
+                dashboardMetrics
+                dashboardActivityCard
+                dashboardRecentCard
             }
-            .padding(16)
         }
         .sheet(item: Binding(
             get: { selectedRequestID.flatMap { id in viewModel.logs.first(where: { $0.id == id }) } },
@@ -334,21 +435,126 @@ private struct DashboardSectionView: View {
         }
     }
 
-    private func metricCard(title: String, value: String, subtitle: String, icon: String) -> some View {
-        TokfenceCard {
-            Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(TokfenceTheme.accentPrimary)
-            Text(value)
-                .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                .foregroundStyle(TokfenceTheme.textPrimary)
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(TokfenceTheme.textPrimary)
-            Text(subtitle)
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(TokfenceTheme.textSecondary)
+    private var dashboardHeader: some View {
+        TokfenceSectionHeader(
+            title: "Dashboard",
+            subtitle: "What happened today",
+            trailing: AnyView(
+                Button {
+                    Task { await viewModel.refreshAll() }
+                } label: {
+                    if viewModel.isRefreshing {
+                        ProgressView()
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+                .buttonStyle(.bordered)
+            )
+        )
+    }
+
+    private var dashboardMetrics: some View {
+        HStack(spacing: 12) {
+            TokfenceMetricCard(
+                icon: "arrow.up.arrow.down",
+                value: "\(viewModel.snapshot.todayRequests)",
+                title: "Requests",
+                subtitle: "today",
+                trend: requestsTrendText
+            )
+            TokfenceMetricCard(
+                icon: "textformat.123",
+                value: TokfenceFormatting.tokens(viewModel.snapshot.todayInputTokens + viewModel.snapshot.todayOutputTokens),
+                title: "Tokens",
+                subtitle: "in + out"
+            )
+            TokfenceMetricCard(
+                icon: "dollarsign.circle",
+                value: TokfenceFormatting.usd(cents: viewModel.snapshot.todayCostCents),
+                title: "Cost",
+                subtitle: "estimated today"
+            )
+            TokfenceMetricCard(
+                icon: "clock",
+                value: TokfenceFormatting.latency(ms: medianLatencyMS),
+                title: "Latency",
+                subtitle: "median p50"
+            )
         }
+        .frame(height: 160)
+    }
+
+    private var dashboardActivityCard: some View {
+        TokfenceCard {
+            Text("Activity (24h)")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+
+            if chartPoints.isEmpty {
+                TokfenceEmptyState(
+                    symbol: "chart.bar",
+                    title: "No activity yet",
+                    message: "Start an AI agent and point it to localhost:9471.",
+                    actionTitle: nil,
+                    action: nil
+                )
+            } else {
+                dashboardActivityChart
+            }
+        }
+        .frame(height: 220)
+    }
+
+    private var dashboardActivityChart: some View {
+        Chart {
+            ForEach(chartPoints) { point in
+                BarMark(
+                    x: .value("Hour", point.hourStart, unit: .hour),
+                    y: .value("Requests", point.count),
+                    width: .fixed(12)
+                )
+                .foregroundStyle(by: .value("Provider", TokfenceFormatting.providerLabel(point.provider)))
+            }
+            if averageHourlyRequests > 0 {
+                RuleMark(y: .value("Average", averageHourlyRequests))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(TokfenceTheme.textTertiary)
+            }
+        }
+        .frame(height: 180)
+        .chartXScale(domain: chartDomain ?? Date()...Date().addingTimeInterval(24 * 3600))
+        .chartXAxis {
+            AxisMarks(values: .stride(by: .hour, count: 2)) { value in
+                AxisGridLine()
+                AxisTick()
+                if value.as(Date.self) != nil {
+                    AxisValueLabel(format: .dateTime.hour(.twoDigits(amPM: .omitted)))
+                }
+            }
+        }
+        .chartLegend(position: .bottom, spacing: 10)
+    }
+
+    private var dashboardRecentCard: some View {
+        TokfenceCard {
+            Text("Recent Requests")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+
+            if viewModel.logs.isEmpty {
+                TokfenceEmptyState(
+                    symbol: "list.bullet.rectangle",
+                    title: "No requests recorded yet",
+                    message: "Requests will appear here after your first proxied call.",
+                    actionTitle: nil,
+                    action: nil
+                )
+            } else {
+                RequestListPanel(records: Array(viewModel.logs.prefix(3)), selectedRequestID: $selectedRequestID, compact: true)
+            }
+        }
+        .frame(height: 220)
     }
 
 }
@@ -358,12 +564,17 @@ private struct VaultSectionView: View {
 
     @State private var editor: VaultKeyEditorState?
     @State private var providerToRemove: String?
+    @State private var showSetupWizard = false
 
-    private var providersToShow: [String] {
-        if viewModel.providers.isEmpty {
-            return ["anthropic", "openai", "google", "mistral", "groq", "openrouter"]
+    private var configuredProviders: [String] {
+        Array(Set(viewModel.snapshot.vaultProviders.map { $0.lowercased() })).sorted()
+    }
+
+    private func maskedKeyPreview(provider: String) -> String {
+        if provider == "anthropic" {
+            return "Key: sk-ant-************"
         }
-        return viewModel.providers
+        return "Key: sk-************"
     }
 
     var body: some View {
@@ -373,59 +584,75 @@ private struct VaultSectionView: View {
                     title: "Vault",
                     subtitle: "Manage API keys securely",
                     trailing: AnyView(
-                        Button {
-                            if let provider = providersToShow.first(where: { !viewModel.snapshot.vaultProviders.contains($0) }) {
-                                editor = VaultKeyEditorState(provider: provider, mode: .add)
+                        HStack(spacing: 8) {
+                            Button {
+                                showSetupWizard = true
+                            } label: {
+                                Label("Setup Wizard", systemImage: "wand.and.stars")
                             }
-                        } label: {
-                            Label("Add Key", systemImage: "plus")
+                            .buttonStyle(.bordered)
+
+                            Button {
+                                editor = VaultKeyEditorState(provider: "", mode: .add, upstream: "")
+                            } label: {
+                                Label("Add Key", systemImage: "plus")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(TokfenceTheme.accentPrimary)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(TokfenceTheme.accentPrimary)
                     )
                 )
 
-                ForEach(providersToShow, id: \.self) { provider in
-                    let hasKey = viewModel.snapshot.vaultProviders.contains(provider)
+                if configuredProviders.isEmpty {
+                    TokfenceEmptyState(
+                        symbol: "key.fill",
+                        title: "No API keys stored",
+                        message: "Add your first provider key to get started.",
+                        actionTitle: "Run Setup Wizard",
+                        action: {
+                            showSetupWizard = true
+                        }
+                    )
+                }
+
+                ForEach(configuredProviders, id: \.self) { provider in
                     let isRevoked = viewModel.snapshot.revokedProviders.contains(provider)
                     let lastUsed = viewModel.logs.first(where: { $0.provider == provider })?.timestamp
+                    let upstream = viewModel.snapshot.providerUpstreams[provider] ?? ""
 
                     TokfenceCard {
                         HStack(alignment: .center) {
                             Circle()
-                                .fill(hasKey ? (isRevoked ? TokfenceTheme.warning : TokfenceTheme.healthy) : TokfenceTheme.textTertiary)
+                                .fill(isRevoked ? TokfenceTheme.warning : TokfenceTheme.healthy)
                                 .frame(width: 10, height: 10)
                             Text(TokfenceFormatting.providerLabel(provider))
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(TokfenceTheme.textPrimary)
                             Spacer()
-                            if hasKey {
-                                Button("Rotate") {
-                                    editor = VaultKeyEditorState(provider: provider, mode: .rotate)
-                                }
-                                .buttonStyle(.bordered)
-
-                                Button("Remove", role: .destructive) {
-                                    providerToRemove = provider
-                                }
-                                .buttonStyle(.bordered)
-                            } else {
-                                Button("Add Key") {
-                                    editor = VaultKeyEditorState(provider: provider, mode: .add)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(TokfenceTheme.accentPrimary)
+                            Button("Rotate") {
+                                editor = VaultKeyEditorState(provider: provider, mode: .rotate, upstream: upstream)
                             }
+                            .buttonStyle(.bordered)
+
+                            Button("Remove", role: .destructive) {
+                                providerToRemove = provider
+                            }
+                            .buttonStyle(.bordered)
                         }
 
-                        Text(hasKey ? "Key: configured (masked)" : "Key: not configured")
+                        Text(maskedKeyPreview(provider: provider))
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .foregroundStyle(TokfenceTheme.textPrimary)
 
+                        if !upstream.isEmpty {
+                            Text(upstream)
+                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .foregroundStyle(TokfenceTheme.textSecondary)
+                                .lineLimit(1)
+                        }
+
                         Text(
-                            hasKey
-                                ? "Last used: " + (lastUsed.map { TokfenceFormatting.relative($0) } ?? "never")
-                                : "Agents using this provider will fail until a key is added."
+                            "Last used: " + (lastUsed.map { TokfenceFormatting.relative($0) } ?? "never")
                         )
                             .font(.system(size: 11, weight: .regular))
                             .foregroundStyle(TokfenceTheme.textSecondary)
@@ -433,7 +660,7 @@ private struct VaultSectionView: View {
                 }
 
                 TokfenceCard {
-                    Text("Vault backend: macOS Keychain (default)")
+                    Text("Vault backend: macOS Keychain (default) · \(configuredProviders.count) keys stored")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(TokfenceTheme.textPrimary)
                     HStack(spacing: 8) {
@@ -449,15 +676,21 @@ private struct VaultSectionView: View {
                     }
                 }
             }
-            .padding(16)
+        }
+        .sheet(isPresented: $showSetupWizard) {
+            SetupWizardSheet(viewModel: viewModel, knownUpstreams: viewModel.snapshot.providerUpstreams)
         }
         .sheet(item: $editor) { state in
-            VaultKeyEditorSheet(state: state) { key in
+            VaultKeyEditorSheet(state: state, knownUpstreams: viewModel.snapshot.providerUpstreams) { submission in
                 Task {
                     if state.mode == .add {
-                        await viewModel.addVaultKey(provider: state.provider, key: key)
+                        await viewModel.addVaultKey(
+                            provider: submission.provider,
+                            key: submission.key,
+                            endpoint: submission.endpoint
+                        )
                     } else {
-                        await viewModel.rotateVaultKey(provider: state.provider, key: key)
+                        await viewModel.rotateVaultKey(provider: state.provider, key: submission.key)
                     }
                     editor = nil
                 }
@@ -490,7 +723,7 @@ private struct LogsSectionView: View {
     @State private var selectedRequestID: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             TokfenceSectionHeader(
                 title: "Logs",
                 subtitle: "Live request stream"
@@ -534,84 +767,40 @@ private struct LogsSectionView: View {
                             action: nil
                         )
                     } else {
-                        Table(viewModel.filteredLogs, selection: $selectedRequestID) {
-                            TableColumn("Time") { record in
-                                Text(TokfenceFormatting.timeOfDay(record.timestamp))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(TokfenceTheme.textSecondary)
-                            }
-                            .width(80)
-
-                            TableColumn("Provider") { record in
-                                TokfenceProviderBadge(provider: record.provider, active: true)
-                            }
-                            .width(95)
-
-                            TableColumn("Model") { record in
-                                Text(record.model)
-                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                    .lineLimit(1)
-                            }
-                            .width(min: 140, ideal: 210)
-
-                            TableColumn("Tokens") { record in
-                                Text("\(TokfenceFormatting.tokens(record.inputTokens)) -> \(TokfenceFormatting.tokens(record.outputTokens))")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(120)
-
-                            TableColumn("Cost") { record in
-                                Text(TokfenceFormatting.usd(cents: record.estimatedCostCents))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(70)
-
-                            TableColumn("Latency") { record in
-                                Text(TokfenceFormatting.latency(ms: record.latencyMS))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            .width(80)
-
-                            TableColumn("Status") { record in
-                                Circle()
-                                    .fill(TokfenceTheme.statusColor(for: record.statusCode))
-                                    .frame(width: 8, height: 8)
-                            }
-                            .width(50)
-                        }
-                        .frame(minHeight: 420)
+                        RequestListPanel(records: viewModel.filteredLogs, selectedRequestID: $selectedRequestID)
                     }
                 }
+                .frame(maxHeight: .infinity)
 
                 if let selectedRequestID, let record = viewModel.logs.first(where: { $0.id == selectedRequestID }) {
                     TokfenceCard {
                         LogDetailPanel(record: record)
                     }
-                    .frame(minWidth: 320, idealWidth: 360)
+                    .frame(width: 320)
                 }
+            }
+            .frame(height: 500)
+        }
+        .onChange(of: viewModel.logTimeRange) { _, _ in
+            Task {
+                await viewModel.refreshLogsOnly()
             }
         }
-        .padding(16)
-            .onChange(of: viewModel.logTimeRange) { _, _ in
-                Task {
-                    await viewModel.refreshLogsOnly()
-                }
+        .onChange(of: viewModel.logProviderFilter) { _, _ in
+            Task {
+                await viewModel.refreshLogsOnly()
             }
-            .onChange(of: viewModel.logProviderFilter) { _, _ in
-                Task {
-                    await viewModel.refreshLogsOnly()
-                }
+        }
+        .onChange(of: viewModel.logStatusFilter) { _, _ in
+            Task {
+                await viewModel.refreshLogsOnly()
             }
-            .onChange(of: viewModel.logStatusFilter) { _, _ in
-                Task {
-                    await viewModel.refreshLogsOnly()
-                }
+        }
+        .onChange(of: viewModel.logQuery) { _, _ in
+            Task {
+                await viewModel.refreshLogsOnly()
             }
-            .onChange(of: viewModel.logQuery) { _, _ in
-                Task {
-                    await viewModel.refreshLogsOnly()
-                }
-            }
+        }
     }
 
     private var filterBar: some View {
@@ -624,7 +813,7 @@ private struct LogsSectionView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 160)
+                .frame(width: 150)
 
                 Picker("Status", selection: $viewModel.logStatusFilter) {
                     ForEach(TokfenceLogStatusFilter.allCases) { filter in
@@ -632,7 +821,7 @@ private struct LogsSectionView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 180)
+                .frame(width: 140)
 
                 Picker("Range", selection: $viewModel.logTimeRange) {
                     Text("1h").tag(TokfenceTimeRange.oneHour)
@@ -641,12 +830,14 @@ private struct LogsSectionView: View {
                     Text("7d").tag(TokfenceTimeRange.sevenDays)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 230)
+                .frame(width: 220)
 
                 TextField("Search model, request ID, caller", text: $viewModel.logQuery)
                     .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
             }
         }
+        .frame(height: 60)
     }
 
 }
@@ -688,6 +879,7 @@ private struct BudgetSectionView: View {
                 )
 
                 globalBudgetCard
+                    .frame(height: 180)
 
                 if providerBudgets.isEmpty {
                     TokfenceEmptyState(
@@ -728,6 +920,7 @@ private struct BudgetSectionView: View {
                                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                                 TokfenceBudgetProgressBar(current: budget.currentSpendCents, limit: budget.limitCents)
                             }
+                            .frame(height: 120)
                         }
                     }
                 }
@@ -750,8 +943,8 @@ private struct BudgetSectionView: View {
                         .frame(height: 180)
                     }
                 }
+                .frame(height: 220)
             }
-            .padding(16)
         }
         .sheet(item: $budgetEditor) { state in
             BudgetEditorSheet(state: state) { amount, period in
@@ -833,6 +1026,44 @@ private struct ProvidersSectionView: View {
     @State private var rateEditor: RateLimitEditorState?
     @State private var confirmKillSwitch = false
 
+    private enum ProviderOperationalStatus {
+        case active
+        case revoked
+        case missingKey
+    }
+
+    private func operationalStatus(for provider: TokfenceProviderOverview) -> ProviderOperationalStatus {
+        if !provider.hasKey {
+            return .missingKey
+        }
+        if provider.isRevoked {
+            return .revoked
+        }
+        return .active
+    }
+
+    private func statusDotColor(for status: ProviderOperationalStatus) -> Color {
+        switch status {
+        case .active:
+            return TokfenceTheme.healthy
+        case .revoked:
+            return TokfenceTheme.warning
+        case .missingKey:
+            return TokfenceTheme.textTertiary
+        }
+    }
+
+    private func statusLabel(for status: ProviderOperationalStatus) -> String {
+        switch status {
+        case .active:
+            return "Active"
+        case .revoked:
+            return "Revoked"
+        case .missingKey:
+            return "Missing Key"
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -858,27 +1089,43 @@ private struct ProvidersSectionView: View {
                         .tint(viewModel.snapshot.killSwitchActive ? TokfenceTheme.healthy : TokfenceTheme.danger)
                     }
                 }
+                .frame(height: 120)
 
                 ForEach(viewModel.providerOverview) { provider in
+                    let status = operationalStatus(for: provider)
                     TokfenceCard {
                         HStack {
                             Circle()
-                                .fill(provider.isRevoked ? TokfenceTheme.warning : TokfenceTheme.healthy)
+                                .fill(statusDotColor(for: status))
                                 .frame(width: 10, height: 10)
                             Text(TokfenceFormatting.providerLabel(provider.provider))
                                 .font(.system(size: 15, weight: .semibold))
                             Spacer()
-                            if provider.isRevoked {
-                                Button("Restore") {
-                                    providerToRestore = provider.provider
+                            HStack(spacing: 8) {
+                                Text(statusLabel(for: status))
+                                    .font(.system(size: 11, weight: .medium))
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 8)
+                                    .background(TokfenceTheme.bgTertiary, in: RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous))
+                                if status == .revoked {
+                                    Button("Restore") {
+                                        providerToRestore = provider.provider
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(TokfenceTheme.healthy)
+                                } else if status == .active {
+                                    Button("Revoke") {
+                                        providerToRevoke = provider.provider
+                                    }
+                                    .buttonStyle(.bordered)
+                                } else {
+                                    Button("Configure Key") {
+                                        withAnimation(TokfenceTheme.uiSpring) {
+                                            viewModel.selectedSection = .vault
+                                        }
+                                    }
+                                    .buttonStyle(.bordered)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(TokfenceTheme.healthy)
-                            } else {
-                                Button("Revoke") {
-                                    providerToRevoke = provider.provider
-                                }
-                                .buttonStyle(.bordered)
                             }
                         }
 
@@ -888,6 +1135,7 @@ private struct ProvidersSectionView: View {
 
                         Text("Key: \(provider.hasKey ? "configured" : "missing")")
                             .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(provider.hasKey ? TokfenceTheme.textPrimary : TokfenceTheme.warning)
 
                         HStack(spacing: 8) {
                             Text("Rate limit: \(provider.rateLimitRPM.map { "\($0) RPM" } ?? "not set")")
@@ -909,10 +1157,10 @@ private struct ProvidersSectionView: View {
                             .font(.system(size: 12, weight: .medium, design: .monospaced))
                             .foregroundStyle(TokfenceTheme.textPrimary)
                     }
-                    .opacity(provider.isRevoked ? 0.72 : 1)
+                    .opacity(status == .active ? 1 : 0.84)
+                    .frame(height: 160)
                 }
             }
-            .padding(16)
         }
         .sheet(item: $rateEditor) { state in
             RateLimitEditorSheet(state: state) { rpm in
@@ -974,80 +1222,88 @@ private struct SettingsSectionView: View {
 
     @State private var shellSnippet = ""
 
+    private var sortedBaseURLs: [(key: String, value: String)] {
+        viewModel.envMap
+            .filter { $0.key.hasSuffix("_BASE_URL") }
+            .sorted { $0.key < $1.key }
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                TokfenceSectionHeader(title: "Settings", subtitle: "Daemon, paths and shell integration")
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Settings")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(TokfenceTheme.textPrimary)
 
-                TokfenceCard {
-                    Text("Daemon")
-                        .font(.system(size: 15, weight: .semibold))
-                    HStack(spacing: 12) {
-                        TokfenceStatusDot(
-                            color: viewModel.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger,
-                            label: viewModel.snapshot.running ? "Online" : "Offline"
-                        )
-                        Text(viewModel.snapshot.addr ?? "127.0.0.1:9471")
-                            .font(.system(size: 12, weight: .regular, design: .monospaced))
-                            .foregroundStyle(TokfenceTheme.textSecondary)
-                    }
-                    HStack(spacing: 8) {
-                        Button("Start") { Task { await viewModel.startDaemon() } }
-                            .buttonStyle(.bordered)
-                        Button("Stop") { Task { await viewModel.stopDaemon() } }
-                            .buttonStyle(.bordered)
-                        Button("Refresh") { Task { await viewModel.refreshAll() } }
-                            .buttonStyle(.bordered)
-                    }
-                }
+            TokfenceCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    settingsTitle("Daemon")
+                    settingsValue("Port 9471 · Auto-start: On · Bind \(viewModel.snapshot.addr ?? "127.0.0.1:9471")")
 
-                TokfenceCard {
-                    Text("Desktop Integration")
-                        .font(.system(size: 15, weight: .semibold))
-                    TextField("Tokfence binary path", text: $viewModel.binaryPath)
-                        .textFieldStyle(.roundedBorder)
-                    HStack(spacing: 8) {
-                        Button("Save") { viewModel.saveBinaryPath() }
-                            .buttonStyle(.borderedProminent)
-                            .tint(TokfenceTheme.accentPrimary)
-                        Button("Open Data Folder") { viewModel.openDataFolder() }
-                            .buttonStyle(.bordered)
-                    }
-                }
+                    settingsTitle("Vault")
+                    settingsValue("Backend: macOS Keychain · Change passphrase")
 
-                TokfenceCard {
-                    Text("Shell")
-                        .font(.system(size: 15, weight: .semibold))
-                    TextEditor(text: Binding(
-                        get: { shellSnippet.isEmpty ? viewModel.shellSnippet() : shellSnippet },
-                        set: { shellSnippet = $0 }
-                    ))
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .frame(height: 72)
-                    .scrollContentBackground(.hidden)
-                    .background(TokfenceTheme.bgTertiary, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    HStack(spacing: 8) {
-                        Button("Copy") {
-                            let value = shellSnippet.isEmpty ? viewModel.shellSnippet() : shellSnippet
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(value, forType: .string)
+                    settingsTitle("Logging")
+                    settingsValue("DB: ~/.tokfence/tokfence.db · Retention 30d")
+
+                    settingsTitle("Notifications")
+                    settingsValue("Warn at 80% · macOS notifications On")
+
+                    settingsTitle("Shell")
+                    settingsValue("eval \"$(tokfence env)\"")
+
+                    settingsTitle("Base URLs")
+                    if sortedBaseURLs.isEmpty {
+                        settingsValue("No BASE_URL exports available")
+                    } else {
+                        ForEach(sortedBaseURLs, id: \.key) { item in
+                            Text("\(item.key)=\(item.value)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(TokfenceTheme.textSecondary)
+                                .textSelection(.enabled)
                         }
-                        .buttonStyle(.bordered)
                     }
-                }
 
-                TokfenceCard {
-                    Text("About")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("Tokfence Desktop")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(TokfenceTheme.textSecondary)
+                    settingsTitle("About")
+                    settingsValue("Version \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0") · Build 2026-02-16 · GitHub · Docs")
                 }
             }
-            .padding(16)
+            .frame(height: 500)
+
+            HStack(spacing: 8) {
+                Button("Start") { Task { await viewModel.startDaemon() } }
+                    .buttonStyle(.bordered)
+                Button("Stop") { Task { await viewModel.stopDaemon() } }
+                    .buttonStyle(.bordered)
+                Button("Refresh") { Task { await viewModel.refreshAll() } }
+                    .buttonStyle(.bordered)
+                Button("Save Binary Path") { viewModel.saveBinaryPath() }
+                    .buttonStyle(.bordered)
+                Button("Open Data Folder") { viewModel.openDataFolder() }
+                    .buttonStyle(.bordered)
+                Button("Copy Shell Snippet") {
+                    let value = shellSnippet.isEmpty ? viewModel.shellSnippet() : shellSnippet
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(value, forType: .string)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            TextField("Tokfence binary path", text: $viewModel.binaryPath)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 460)
         }
+    }
+
+    private func settingsTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(TokfenceTheme.textPrimary)
+    }
+
+    private func settingsValue(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .regular))
+            .foregroundStyle(TokfenceTheme.textSecondary)
     }
 }
 
@@ -1102,6 +1358,12 @@ private struct LogDetailPanel: View {
     }
 }
 
+private struct VaultKeySubmission {
+    let provider: String
+    let key: String
+    let endpoint: String?
+}
+
 private struct VaultKeyEditorState: Identifiable {
     enum Mode {
         case add
@@ -1111,41 +1373,426 @@ private struct VaultKeyEditorState: Identifiable {
     let id = UUID()
     let provider: String
     let mode: Mode
+    let upstream: String
 }
 
 private struct VaultKeyEditorSheet: View {
     let state: VaultKeyEditorState
-    let onSubmit: (String) -> Void
+    let knownUpstreams: [String: String]
+    let onSubmit: (VaultKeySubmission) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var provider = ""
+    @State private var endpoint = ""
     @State private var key = ""
+    @State private var endpointManuallyEdited = false
+    @State private var suppressEndpointTracking = false
+
+    private static let smartDefaults: [String: String] = [
+        "anthropic": "https://api.anthropic.com",
+        "openai": "https://api.openai.com",
+        "google": "https://generativelanguage.googleapis.com",
+        "mistral": "https://api.mistral.ai",
+        "openrouter": "https://openrouter.ai/api",
+        "groq": "https://api.groq.com/openai",
+        "deepseek": "https://api.deepseek.com",
+    ]
+
+    private var normalizedProvider: String {
+        provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var trimmedKey: String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedEndpoint: String {
+        endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isValidProviderName: Bool {
+        guard !normalizedProvider.isEmpty else { return false }
+        return normalizedProvider.range(of: "^[a-z0-9][a-z0-9_-]{0,62}$", options: .regularExpression) != nil
+    }
+
+    private var suggestedEndpoint: String? {
+        guard !normalizedProvider.isEmpty else { return nil }
+        if let existing = knownUpstreams[normalizedProvider], !existing.isEmpty {
+            return existing
+        }
+        return Self.smartDefaults[normalizedProvider]
+    }
+
+    private var resolvedEndpoint: String? {
+        if !trimmedEndpoint.isEmpty {
+            return trimmedEndpoint
+        }
+        return suggestedEndpoint
+    }
+
+    private var requiresEndpoint: Bool {
+        state.mode == .add && suggestedEndpoint == nil
+    }
+
+    private var canSubmit: Bool {
+        switch state.mode {
+        case .add:
+            if !isValidProviderName || trimmedKey.isEmpty {
+                return false
+            }
+            if requiresEndpoint && resolvedEndpoint == nil {
+                return false
+            }
+            return true
+        case .rotate:
+            return !trimmedKey.isEmpty
+        }
+    }
+
+    private func applyEndpointSuggestionIfNeeded() {
+        guard state.mode == .add else { return }
+        if endpointManuallyEdited && !trimmedEndpoint.isEmpty {
+            return
+        }
+        let value = suggestedEndpoint ?? ""
+        suppressEndpointTracking = true
+        endpoint = value
+        suppressEndpointTracking = false
+        endpointManuallyEdited = false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(state.mode == .add ? "Add API key" : "Rotate API key")
                 .font(.system(size: 16, weight: .semibold))
-            Text(TokfenceFormatting.providerLabel(state.provider))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(TokfenceTheme.textSecondary)
+
+            if state.mode == .add {
+                TextField("Provider name (e.g. anthropic, deepseek)", text: $provider)
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+
+                TextField("Endpoint URL (optional for known providers)", text: $endpoint)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("Known providers are prefilled. For new custom providers, set full endpoint URL.")
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+
+                if !normalizedProvider.isEmpty && !isValidProviderName {
+                    Text("Provider must use lowercase letters, numbers, '-' or '_'.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.danger)
+                }
+
+                if requiresEndpoint && trimmedEndpoint.isEmpty {
+                    Text("Endpoint is required for unknown custom providers.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.warning)
+                }
+            } else {
+                Text(TokfenceFormatting.providerLabel(state.provider))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+                if !state.upstream.isEmpty {
+                    Text(state.upstream)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                }
+            }
+
             SecureField("Paste API key", text: $key)
                 .textFieldStyle(.roundedBorder)
+
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .buttonStyle(.bordered)
                 Button(state.mode == .add ? "Add" : "Rotate") {
-                    let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return }
-                    onSubmit(trimmed)
+                    guard canSubmit else { return }
+                    onSubmit(VaultKeySubmission(
+                        provider: state.mode == .add ? normalizedProvider : state.provider,
+                        key: trimmedKey,
+                        endpoint: state.mode == .add ? resolvedEndpoint : nil
+                    ))
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(TokfenceTheme.accentPrimary)
-                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSubmit)
             }
         }
         .padding(16)
-        .frame(minWidth: 420)
+        .frame(minWidth: 460)
+        .onAppear {
+            provider = state.provider
+            endpoint = state.upstream
+            applyEndpointSuggestionIfNeeded()
+        }
+        .onChange(of: provider) { _, _ in
+            applyEndpointSuggestionIfNeeded()
+        }
+        .onChange(of: endpoint) { _, _ in
+            if state.mode == .add && !suppressEndpointTracking {
+                endpointManuallyEdited = true
+            }
+        }
+    }
+}
+
+private struct SetupWizardSheet: View {
+    @ObservedObject var viewModel: TokfenceAppViewModel
+    let knownUpstreams: [String: String]
+
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var provider = "openai"
+    @State private var endpoint = ""
+    @State private var model = ""
+    @State private var key = ""
+    @State private var isRunning = false
+    @State private var result: TokfenceSetupWizardResult?
+    @State private var failureMessage = ""
+    @State private var endpointEdited = false
+    @State private var suppressEndpointTracking = false
+
+    private static let endpointDefaults: [String: String] = [
+        "anthropic": "https://api.anthropic.com",
+        "openai": "https://api.openai.com",
+        "google": "https://generativelanguage.googleapis.com",
+        "mistral": "https://api.mistral.ai",
+        "openrouter": "https://openrouter.ai/api",
+        "groq": "https://api.groq.com/openai",
+        "deepseek": "https://api.deepseek.com",
+    ]
+
+    private static let modelDefaults: [String: String] = [
+        "anthropic": "claude-3-5-haiku-latest",
+        "openai": "gpt-4o-mini",
+        "mistral": "mistral-small-latest",
+        "openrouter": "openai/gpt-4o-mini",
+        "groq": "llama-3.1-8b-instant",
+        "deepseek": "deepseek-chat",
+    ]
+
+    private var normalizedProvider: String {
+        provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var trimmedEndpoint: String {
+        endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedModel: String {
+        model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedKey: String {
+        key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var validProviderName: Bool {
+        guard !normalizedProvider.isEmpty else { return false }
+        return normalizedProvider.range(of: "^[a-z0-9][a-z0-9_-]{0,62}$", options: .regularExpression) != nil
+    }
+
+    private var suggestedEndpoint: String? {
+        if let configured = knownUpstreams[normalizedProvider], !configured.isEmpty {
+            return configured
+        }
+        return Self.endpointDefaults[normalizedProvider]
+    }
+
+    private var suggestedModel: String {
+        Self.modelDefaults[normalizedProvider] ?? "gpt-4o-mini"
+    }
+
+    private var canRun: Bool {
+        validProviderName && !trimmedKey.isEmpty && normalizedProvider != "google"
+    }
+
+    private func maybePrefillEndpoint() {
+        if endpointEdited && !trimmedEndpoint.isEmpty {
+            return
+        }
+        let suggested = suggestedEndpoint ?? ""
+        suppressEndpointTracking = true
+        endpoint = suggested
+        suppressEndpointTracking = false
+        endpointEdited = false
+    }
+
+    private func maybePrefillModel() {
+        if trimmedModel.isEmpty {
+            model = suggestedModel
+        }
+    }
+
+    private func runWizard() {
+        guard canRun else { return }
+        isRunning = true
+        failureMessage = ""
+        result = nil
+
+        Task {
+            do {
+                let output = try await viewModel.runSetupWizard(
+                    provider: normalizedProvider,
+                    endpoint: trimmedEndpoint.isEmpty ? nil : trimmedEndpoint,
+                    key: trimmedKey,
+                    model: trimmedModel
+                )
+                await MainActor.run {
+                    result = output
+                    isRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    failureMessage = error.localizedDescription
+                    isRunning = false
+                }
+            }
+        }
+    }
+
+    private func copyOpenClawLine() {
+        guard let result else { return }
+        let line = "base_url: \"\(result.baseURL)\""
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(line, forType: .string)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Setup Wizard")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            Text("1-minute confidence flow: store key, run streaming request, verify logs and cost.")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+
+            TextField("Provider name (e.g. openai, anthropic, deepseek)", text: $provider)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+
+            TextField("Endpoint URL (optional for known providers)", text: $endpoint)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("Model for probe request", text: $model)
+                .textFieldStyle(.roundedBorder)
+
+            SecureField("API key", text: $key)
+                .textFieldStyle(.roundedBorder)
+
+            if normalizedProvider == "google" {
+                Text("Automatic streaming probe for google is not supported yet. Use another provider for the wizard.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.warning)
+            }
+
+            if !failureMessage.isEmpty {
+                Text(failureMessage)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.danger)
+            }
+
+            if let result {
+                TokfenceCard {
+                    stepRow("Daemon reachable", ok: result.daemonReachable)
+                    stepRow("Key stored in vault", ok: result.keyStored)
+                    stepRow(
+                        "Streaming first chunk",
+                        ok: result.probe.streamChunkReceived,
+                        detail: result.probe.firstChunkMS.map { "\($0) ms" } ?? "not observed"
+                    )
+                    stepRow(
+                        "HTTP status",
+                        ok: (200..<300).contains(result.probe.statusCode),
+                        detail: "\(result.probe.statusCode)"
+                    )
+                    stepRow("Log entry created", ok: result.logFound, detail: result.logRecord?.id ?? "missing")
+                    stepRow("Tokens logged", ok: result.tokensLogged)
+                    stepRow("Cost logged", ok: result.costLogged)
+
+                    if !result.probe.responsePreview.isEmpty && !result.probe.streamChunkReceived {
+                        Text("Probe response preview")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                        Text(result.probe.responsePreview)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                            .lineLimit(4)
+                    }
+
+                    HStack {
+                        Text("OpenClaw config:")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                        Text("base_url: \"\(result.baseURL)\"")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(TokfenceTheme.textPrimary)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Copy") {
+                            copyOpenClawLine()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            HStack {
+                if isRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Running end-to-end verification...")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                }
+                Spacer()
+                Button("Close") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                Button("Run Verification") {
+                    runWizard()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TokfenceTheme.accentPrimary)
+                .disabled(isRunning || !canRun)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 640, minHeight: 560)
+        .onAppear {
+            maybePrefillEndpoint()
+            maybePrefillModel()
+        }
+        .onChange(of: provider) { _, _ in
+            maybePrefillEndpoint()
+            maybePrefillModel()
+        }
+        .onChange(of: endpoint) { _, _ in
+            if !suppressEndpointTracking {
+                endpointEdited = true
+            }
+        }
+    }
+
+    private func stepRow(_ title: String, ok: Bool, detail: String? = nil) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(ok ? TokfenceTheme.healthy : TokfenceTheme.warning)
+                .font(.system(size: 12, weight: .medium))
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+            }
+            Spacer()
+        }
     }
 }
 

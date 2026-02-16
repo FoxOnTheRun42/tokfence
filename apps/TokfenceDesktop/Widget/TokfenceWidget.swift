@@ -39,11 +39,13 @@ struct TokfenceWidgetEntryView: View {
     }
 
     private var providersLine: String {
-        let active = entry.snapshot.providers.filter { !entry.snapshot.revokedProviders.contains($0) }
-        if active.isEmpty {
-            return "no providers"
-        }
-        return active.prefix(3).map(TokfenceFormatting.providerLabel).joined(separator: " · ")
+        let all = ["anthropic", "openai", "mistral"]
+        let active = Set(entry.snapshot.providers.filter { !entry.snapshot.revokedProviders.contains($0) })
+        return all.map { provider in
+            let label = TokfenceFormatting.providerLabel(provider).lowercased()
+            let dot = active.contains(provider) ? "\u{25CF}" : "\u{25CB}"
+            return "\(label) \(dot)"
+        }.joined(separator: "  ")
     }
 
     private var small: some View {
@@ -51,14 +53,14 @@ struct TokfenceWidgetEntryView: View {
             HStack {
                 Text("Tokfence")
                     .font(.system(size: 12, weight: .semibold))
+                Text(entry.snapshot.running ? "\u{25CF} On" : "\u{25CF} Off")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
                 Spacer()
-                Circle()
-                    .fill(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
-                    .frame(width: 8, height: 8)
             }
 
-            Text(TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
-                .font(.system(size: 22, weight: .semibold, design: .monospaced))
+            Text("\(TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents)) today")
+                .font(.system(size: 18, weight: .semibold, design: .monospaced))
                 .foregroundStyle(TokfenceTheme.textPrimary)
             Text("\(entry.snapshot.todayRequests) requests")
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -66,6 +68,9 @@ struct TokfenceWidgetEntryView: View {
 
             if let budget = dailyBudget {
                 WidgetBudgetBar(current: budget.currentSpendCents, limit: budget.limitCents)
+                Text(TokfenceFormatting.percentString(current: budget.currentSpendCents, limit: budget.limitCents))
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
             } else {
                 Text("No daily budget")
                     .font(.system(size: 10, weight: .regular))
@@ -83,12 +88,9 @@ struct TokfenceWidgetEntryView: View {
             HStack {
                 Text("Tokfence")
                     .font(.system(size: 13, weight: .semibold))
-                Circle()
-                    .fill(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
-                    .frame(width: 8, height: 8)
-                Text(entry.snapshot.running ? "Online" : "Offline")
+                Text(entry.snapshot.running ? "\u{25CF} Online" : "\u{25CF} Offline")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(TokfenceTheme.textSecondary)
+                    .foregroundStyle(entry.snapshot.running ? TokfenceTheme.healthy : TokfenceTheme.danger)
                 Spacer()
                 if entry.snapshot.killSwitchActive {
                     Text("KILLED")
@@ -104,6 +106,7 @@ struct TokfenceWidgetEntryView: View {
                 metric(title: "cost", value: TokfenceFormatting.usd(cents: entry.snapshot.todayCostCents))
                 metric(title: "requests", value: "\(entry.snapshot.todayRequests)")
                 metric(title: "tokens", value: TokfenceFormatting.tokens(entry.snapshot.todayInputTokens + entry.snapshot.todayOutputTokens))
+                metric(title: "p50", value: "--")
             }
 
             if let budget = dailyBudget {

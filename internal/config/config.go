@@ -201,3 +201,51 @@ func Load(path string) (Config, error) {
 
 	return cfg, nil
 }
+
+func Save(path string, cfg Config) error {
+	if path == "" {
+		path = DefaultConfigPath()
+	}
+	expanded, err := ExpandPath(path)
+	if err != nil {
+		return fmt.Errorf("expand config path: %w", err)
+	}
+
+	dir := filepath.Dir(expanded)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil && !os.IsPermission(err) {
+		return fmt.Errorf("set config directory perms: %w", err)
+	}
+
+	tmpPath := expanded + ".tmp"
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("open temp config file: %w", err)
+	}
+	encodeErr := toml.NewEncoder(file).Encode(cfg)
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if encodeErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("encode config: %w", encodeErr)
+	}
+	if syncErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("sync temp config file: %w", syncErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp config file: %w", closeErr)
+	}
+
+	if err := os.Rename(tmpPath, expanded); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("replace config file: %w", err)
+	}
+	if err := os.Chmod(expanded, 0o600); err != nil && !os.IsPermission(err) {
+		return fmt.Errorf("set config file perms: %w", err)
+	}
+	return nil
+}
