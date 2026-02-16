@@ -20,6 +20,17 @@ Launch assets + E2E capture: `docs/launch/`
 - Key leak detector (`tokfence watch`) to compare provider-side usage vs Tokfence logs.
 - Native-looking macOS menu UI via SwiftBar widget integration.
 
+## Security Model
+
+Tokfence protects against **key exfiltration** from agent config/runtime by keeping provider keys in a local vault and injecting auth at proxy time.
+
+Important boundary:
+- `127.0.0.1` binding limits network exposure, but it does not isolate local processes.
+- A compromised process on the same machine can still call the local proxy.
+- Budgets, revoke/restore, rate limits, and kill switch are the containment controls for this case.
+
+See [`SECURITY.md`](SECURITY.md) for the full threat model and disclosure policy.
+
 ## Quickstart
 
 ```bash
@@ -113,6 +124,7 @@ This returns:
 If remote usage is higher than local usage beyond your thresholds, Tokfence raises an alert. In continuous mode, it also flags idle-time remote movement (no local traffic for `--idle-window`, but remote usage still increases).
 
 Note: provider usage APIs may require organization/admin-scoped keys or billing permissions.
+Note: provider usage endpoints can lag behind real-time traffic. Treat alerts as indicators that require confirmation, not absolute proof.
 
 Examples:
 
@@ -124,6 +136,7 @@ tokfence watch --once --provider anthropic --json
 tokfence watch --period 24h --interval 15m
 
 # auto-revoke on suspected leak
+# warning: use carefully; usage API delays can produce false positives
 tokfence watch --period 24h --interval 15m --auto-revoke
 
 # endpoint override if provider usage API differs

@@ -1249,7 +1249,7 @@ func newWatchCommand() *cobra.Command {
 	cmd.Flags().Int64Var(&thresholdRequests, "threshold-requests", 1, "alert when remote request count exceeds local by this amount")
 	cmd.Flags().DurationVar(&idleWindow, "idle-window", 30*time.Minute, "idle duration used for idle leak detection")
 	cmd.Flags().BoolVar(&once, "once", false, "run one check and exit")
-	cmd.Flags().BoolVar(&autoRevoke, "auto-revoke", false, "revoke provider automatically when leak is suspected")
+	cmd.Flags().BoolVar(&autoRevoke, "auto-revoke", false, "revoke provider automatically when leak is suspected (may false-positive with delayed usage APIs)")
 	cmd.Flags().StringArrayVar(&customUsageEndpoints, "usage-endpoint", nil, "override usage endpoint as provider=url (repeat flag)")
 	return cmd
 }

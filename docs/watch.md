@@ -10,6 +10,8 @@
 If remote usage is meaningfully higher than local usage, Tokfence emits an alert.  
 In continuous mode, it also detects idle-time drift: no local traffic for a configured window while remote usage still increases.
 
+Important: provider usage APIs can have reporting delay. Alerts should be treated as suspicion signals that require confirmation.
+
 ## Command
 
 ```bash
@@ -24,7 +26,7 @@ Key flags:
 - `--threshold-tokens`: token delta threshold (default `1000`).
 - `--threshold-requests`: request count delta threshold (default `1`).
 - `--idle-window`: idle drift detection window (default `30m`).
-- `--auto-revoke`: automatically revoke provider on alert.
+- `--auto-revoke`: automatically revoke provider on alert (use with care; reporting lag can create false positives).
 - `--usage-endpoint provider=url`: override provider usage endpoint.
 
 ## Data Flow
@@ -47,5 +49,6 @@ Key flags:
 ## Limits
 
 - Provider usage APIs are not standardized; some providers may require endpoint overrides.
+- Provider usage APIs can be delayed/inconsistent; temporary deltas are possible without key compromise.
 - Cost comparisons can be skewed if provider pricing differs from Tokfence estimation for unknown models.
 - Idle drift requires continuous mode to compare current poll vs prior poll.
