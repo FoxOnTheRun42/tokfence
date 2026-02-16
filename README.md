@@ -8,6 +8,16 @@ Tokfence is a local-first daemon and CLI that sits between AI tools and upstream
 
 Launch assets + E2E capture: `docs/launch/`
 
+## Infographics
+
+| Architecture | Security Model |
+| --- | --- |
+| ![Tokfence Architecture](docs/launch/infographic_architecture.png) | ![Tokfence Security Model](docs/launch/infographic_security_model.png) |
+
+| Key Leak Detector | Control Plane |
+| --- | --- |
+| ![Tokfence Key Leak Detector](docs/launch/infographic_leak_detection.png) | ![Tokfence Control Plane](docs/launch/infographic_control_plane.png) |
+
 ## Features
 
 - Local proxy on `127.0.0.1:9471` with provider path routing.
