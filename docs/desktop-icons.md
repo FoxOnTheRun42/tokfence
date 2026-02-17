@@ -1,12 +1,12 @@
-# Tokfence Desktop Icon Prompt Pack
+# Tokfence Desktop Icon Specification
 
 This document defines the icon prompt set for Tokfence Desktop.
-It is the canonical source for icon generation and export naming.
+It is the canonical source for icon design and export naming.
 
 ## Design Language
 
 Reference style:
-- OpenAI icon language (Codex, ChatGPT, API docs)
+- Clean monoline product icon language
 - Monoline or duotone
 - Geometric, not illustrative
 - Consistent corner radius (about 2px on a 24px canvas)
@@ -28,49 +28,49 @@ Color tokens:
 ### 1) Agents
 ```text
 Minimalist icon: hexagonal shield outline with a small circuit-node pattern inside.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, no fill. OpenAI-style clean.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, no fill. Tokfence monoline style clean.
 Conveys: autonomous agents under protection.
 ```
 
 ### 2) Overview
 ```text
 Minimalist icon: dashboard grid, four rounded rectangles arranged 2x2, top-left slightly larger.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, Tokfence monoline style.
 Conveys: system overview at a glance.
 ```
 
 ### 3) Vault
 ```text
 Minimalist icon: keyhole inside a rounded rectangle with a subtle lock arch on top.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, no fill. OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, no fill. Tokfence monoline style.
 Conveys: encrypted key storage, not a physical safe.
 ```
 
 ### 4) Activity
 ```text
 Minimalist icon: three horizontal lines of varying length stacked vertically, with a small dot at each right end.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, Tokfence monoline style.
 Conveys: request stream, activity log.
 ```
 
 ### 5) Budget
 ```text
 Minimalist icon: circular progress ring (3/4 filled) with a small currency-neutral tick mark in the center.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, Tokfence monoline style.
 Conveys: spend tracking, usage limit.
 ```
 
 ### 6) Providers
 ```text
 Minimalist icon: three overlapping rounded squares offset diagonally, like stacked API cards.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, Tokfence monoline style.
 Conveys: multiple API providers, plug-in architecture.
 ```
 
 ### 7) Settings
 ```text
 Minimalist icon: single gear with 6 teeth and perfectly circular center hole.
-Monoline, 1.5px stroke, 24x24 canvas. Geometric, OpenAI-style.
+Monoline, 1.5px stroke, 24x24 canvas. Geometric, Tokfence monoline style.
 Conveys: configuration.
 ```
 
@@ -79,7 +79,7 @@ Conveys: configuration.
 ### 8) Agent Stopped
 ```text
 Minimalist icon: rounded square outline with a centered right-pointing play triangle.
-Monoline, 1.5px stroke, 20x20. Neutral gray. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Neutral gray. Tokfence monoline style.
 Conveys: ready to start, currently idle.
 ```
 
@@ -87,7 +87,7 @@ Conveys: ready to start, currently idle.
 ```text
 Minimalist icon: rounded square outline with two vertical bars (pause symbol) inside.
 Left edge has a 2px solid green accent stripe.
-Duotone: green accent plus gray outline. 20x20. OpenAI-style.
+Duotone: green accent plus gray outline. 20x20. Tokfence monoline style.
 Conveys: actively running.
 ```
 
@@ -95,14 +95,14 @@ Conveys: actively running.
 ```text
 Minimalist icon: rounded square outline with exclamation mark centered.
 Left edge has a 2px solid red accent stripe.
-Duotone: red accent plus gray outline. 20x20. OpenAI-style.
+Duotone: red accent plus gray outline. 20x20. Tokfence monoline style.
 Conveys: error state, needs attention.
 ```
 
 ### 11) Agent Starting
 ```text
 Minimalist icon: circular arc (270 degrees) with open gap at top, suggesting rotation.
-Monoline, 1.5px stroke, 20x20. Neutral gray. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Neutral gray. Tokfence monoline style.
 Conveys: loading, in progress. Animated in UI by rotation.
 ```
 
@@ -111,21 +111,21 @@ Conveys: loading, in progress. Animated in UI by rotation.
 ### 12) Docker
 ```text
 Minimalist icon: container box (rectangular prism outline from slight top angle) with a small whale-fin curve on top.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: containerized environment.
 ```
 
 ### 13) Daemon
 ```text
 Minimalist icon: vertical lightning bolt inside a circle outline.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: background process, always-on service.
 ```
 
 ### 14) Vault Setup
 ```text
 Minimalist icon: key rotated 45 degrees with a small plus sign at the bow end.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: add API key to vault.
 ```
 
@@ -133,28 +133,28 @@ Conveys: add API key to vault.
 ```text
 Minimalist icon: rocket outline, geometric and minimal.
 Only nose cone/body and two small fin lines, no flames.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: launch, deploy.
 ```
 
 ### 16) Step Completed
 ```text
 Minimalist icon: circle outline with centered checkmark.
-Duotone: green fill circle and white checkmark. 20x20. OpenAI-style.
+Duotone: green fill circle and white checkmark. 20x20. Tokfence monoline style.
 Conveys: done, verified.
 ```
 
 ### 17) Step Pending
 ```text
 Minimalist icon: dashed circle outline (4px dash, 3px gap).
-Monoline, 1.5px stroke, 20x20. Light gray. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Light gray. Tokfence monoline style.
 Conveys: not started, waiting.
 ```
 
 ### 18) Step Active
 ```text
 Minimalist icon: circle outline with centered filled dot (4px diameter).
-Monoline, 1.5px stroke, 20x20. Green accent. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Green accent. Tokfence monoline style.
 Conveys: currently in progress.
 ```
 
@@ -163,32 +163,32 @@ Conveys: currently in progress.
 ### 19) Start Securely
 ```text
 Minimalist icon: play triangle with tiny shield badge at bottom-right.
-Monoline, 1.5px stroke, 16x16. Green. OpenAI-style.
+Monoline, 1.5px stroke, 16x16. Green. Tokfence monoline style.
 Conveys: secure launch action.
 ```
 
 ### 20) Stop
 ```text
 Minimalist icon: rounded square stop symbol.
-Monoline, 1.5px stroke, 16x16. Neutral gray. OpenAI-style.
+Monoline, 1.5px stroke, 16x16. Neutral gray. Tokfence monoline style.
 ```
 
 ### 21) Restart
 ```text
 Minimalist icon: single circular arrow with arrowhead, 300-degree sweep.
-Monoline, 1.5px stroke, 16x16. Neutral gray. OpenAI-style.
+Monoline, 1.5px stroke, 16x16. Neutral gray. Tokfence monoline style.
 ```
 
 ### 22) Open (External Link)
 ```text
 Minimalist icon: square with arrow pointing top-right, exiting square.
-Monoline, 1.5px stroke, 16x16. Neutral gray. OpenAI-style.
+Monoline, 1.5px stroke, 16x16. Neutral gray. Tokfence monoline style.
 ```
 
 ### 23) Retry
 ```text
 Minimalist icon: circular arrow with small exclamation dot in the center.
-Monoline, 1.5px stroke, 16x16. Red accent. OpenAI-style.
+Monoline, 1.5px stroke, 16x16. Red accent. Tokfence monoline style.
 ```
 
 ## Menu Bar Status (16x16, template)
@@ -223,42 +223,42 @@ Conveys: attention required.
 ### 27) Capability Token
 ```text
 Minimalist icon: hexagon outline with fingerprint-like curved pattern (three curved lines).
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: cryptographic capability, scoped permission.
 ```
 
 ### 28) Risk Low
 ```text
 Minimalist icon: shield outline with one horizontal bar at bottom third.
-Duotone: green bar plus gray shield. 20x20. OpenAI-style.
+Duotone: green bar plus gray shield. 20x20. Tokfence monoline style.
 Conveys: low risk.
 ```
 
 ### 29) Risk Elevated
 ```text
 Minimalist icon: shield outline with two horizontal bars in lower area.
-Duotone: amber bars plus gray shield. 20x20. OpenAI-style.
+Duotone: amber bars plus gray shield. 20x20. Tokfence monoline style.
 Conveys: elevated caution.
 ```
 
 ### 30) Risk Critical
 ```text
 Minimalist icon: shield with three horizontal bars and exclamation overlay.
-Duotone: red fill and white exclamation. 20x20. OpenAI-style.
+Duotone: red fill and white exclamation. 20x20. Tokfence monoline style.
 Conveys: active threat.
 ```
 
 ### 31) Canary
 ```text
 Minimalist icon: geometric bird silhouette (five straight lines) inside a diamond outline.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: canary token, tripwire detection.
 ```
 
 ### 32) Sensor Scan
 ```text
 Minimalist icon: radar sweep, circle with a radius line and a small arc near tip.
-Monoline, 1.5px stroke, 20x20. OpenAI-style.
+Monoline, 1.5px stroke, 20x20. Tokfence monoline style.
 Conveys: active monitoring.
 ```
 

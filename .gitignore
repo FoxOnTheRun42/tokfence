@@ -14,3 +14,6 @@ AGENTS.md
 BOOTSTRAP_PROMPT.md
 FOLLOW_UP_PROMPTS.md
 tokfence
+tokfence ui/
+apps/TokfenceDesktop/*PROMPT*.md
+docs/pitch.md

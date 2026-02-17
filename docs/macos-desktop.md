@@ -71,5 +71,5 @@ Then run the `TokfenceDesktop` scheme from Xcode.
 - If Tokfence is not in your PATH, set the binary path in the app header.
 - The app and widget are intended for macOS 14+.
 - Guided setup UX spec (Agents-first): `docs/desktop-guided-setup.md`
-- Icon prompt/spec pack: `docs/desktop-icon-prompts.md`
+- Icon specification pack: `docs/desktop-icons.md`
 - Latest desktop smoke results: `docs/desktop-smoke-report.md`
