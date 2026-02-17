@@ -1,5 +1,6 @@
 # Tokfence Live E2E Capture
-# Generated: 2026-02-16T17:01:22Z
+# Reference sample generated: 2026-02-16T17:01:22Z
+# Note: values and IDs vary per run; use this file as format reference.
 
 $ tokfence status --json
 {

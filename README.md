@@ -29,7 +29,7 @@ this attack surface: the container never sees your real keys.
 
 ![Tokfence Runtime](docs/launch/screenshot_agents_transition_runtime.png)
 
-Launch assets + E2E capture: `docs/launch/`
+Launch assets + E2E capture: `docs/launch/` (updated `2026-02-17`)
 
 ## Infographics
 
@@ -40,6 +40,8 @@ Launch assets + E2E capture: `docs/launch/`
 | Key Leak Detector | Control Plane |
 | --- | --- |
 | ![Tokfence Key Leak Detector](docs/launch/infographic_leak_detection.png) | ![Tokfence Control Plane](docs/launch/infographic_control_plane.png) |
+
+Graphic source and regeneration notes: [`docs/launch/README.md`](docs/launch/README.md)
 
 ## Features
 
@@ -257,7 +259,7 @@ In the app:
 
 ## Desktop Preview
 
-Current launch visuals are versioned in `docs/launch/`:
+Current launch visuals are versioned in `docs/launch/` (snapshot set updated `2026-02-17`):
 
 | Guided Setup (Missing Docker) | Guided Setup (Ready) | Runtime |
 | --- | --- | --- |
