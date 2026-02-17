@@ -114,6 +114,8 @@ final class TokfenceAppViewModel: ObservableObject {
     @Published var launchBusy = false
     @Published var launchLogsOutput = ""
     @Published var launchConfigOutput = ""
+    @Published var launchStatusError = ""
+    @Published var isDockerAvailable = true
 
     private var runner = TokfenceCommandRunner()
     private var refreshTask: Task<Void, Never>?
@@ -216,17 +218,125 @@ final class TokfenceAppViewModel: ObservableObject {
         primaryAgentCard.status == .running ? 1 : 0
     }
 
+    var hasVaultSetupKey: Bool {
+        !snapshot.vaultProviders.isEmpty
+    }
+
+    var launchConfigPath: String {
+        let rawPath = launchResult.configPath.isEmpty ? "~/.tokfence/openclaw/openclaw.json" : launchResult.configPath
+        return NSString(string: rawPath).expandingTildeInPath
+    }
+
+    var hasLaunchConfig: Bool {
+        FileManager.default.fileExists(atPath: launchConfigPath)
+    }
+
+    var isSetupReadyForStart: Bool {
+        isDockerAvailable && daemonStatus.running && hasVaultSetupKey
+    }
+
+    var isSetupComplete: Bool {
+        isSetupReadyForStart
+    }
+
+    var primarySetupActionTitle: String {
+        isSetupComplete ? "Start" : "Set up OpenClaw"
+    }
+
+    var setupBlockingReason: String? {
+        if !isDockerAvailable {
+            return launchStatusError.isEmpty ? "Docker is required to run OpenClaw." : launchStatusError
+        }
+        if !daemonStatus.running {
+            return "Tokfence daemon is not running."
+        }
+        if !hasVaultSetupKey {
+            return "Add at least one provider API key in Vault."
+        }
+        return nil
+    }
+
+    var setupSteps: [TokfenceSetupStepState] {
+        let dockerStatus: TokfenceSetupStepStatus = isDockerAvailable
+            ? .complete
+            : .failed(message: launchStatusError.isEmpty ? "Docker is not available." : launchStatusError)
+        let dockerActionTitle = isDockerAvailable ? nil : dockerActionTitle(for: launchStatusError)
+
+        let daemonStatusStep: TokfenceSetupStepStatus
+        if daemonStatus.running {
+            daemonStatusStep = .complete
+        } else if !isDockerAvailable {
+            daemonStatusStep = .pending
+        } else {
+            daemonStatusStep = .pending
+        }
+
+        let vaultStatusStep: TokfenceSetupStepStatus = hasVaultSetupKey ? .complete : .pending
+
+        let containerStatusStep: TokfenceSetupStepStatus
+        switch primaryAgentCard.status {
+        case .running:
+            containerStatusStep = .complete
+        case .starting:
+            containerStatusStep = .inProgress
+        case .error:
+            let message = primaryAgentCard.lastError.isEmpty ? "OpenClaw failed to start." : primaryAgentCard.lastError
+            containerStatusStep = .failed(message: message)
+        case .stopped, .placeholder:
+            containerStatusStep = .pending
+        }
+
+        return [
+            TokfenceSetupStepState(
+                id: .docker,
+                title: "Install Docker Desktop",
+                reason: "OpenClaw runs in an isolated container for credential safety.",
+                actionTitle: dockerActionTitle,
+                status: dockerStatus,
+                isActionEnabled: !isDockerAvailable
+            ),
+            TokfenceSetupStepState(
+                id: .daemon,
+                title: "Start Tokfence Daemon",
+                reason: "Tokfence injects keys and logs all model requests.",
+                actionTitle: daemonStatus.running ? nil : "Start Daemon",
+                status: daemonStatusStep,
+                isActionEnabled: isDockerAvailable && !daemonStatus.running
+            ),
+            TokfenceSetupStepState(
+                id: .vault,
+                title: "Add API Key to Vault",
+                reason: "Keys stay encrypted and never enter the OpenClaw container.",
+                actionTitle: hasVaultSetupKey ? nil : "Open Vault",
+                status: vaultStatusStep,
+                isActionEnabled: !hasVaultSetupKey
+            ),
+            TokfenceSetupStepState(
+                id: .container,
+                title: "Start OpenClaw",
+                reason: hasLaunchConfig
+                    ? "Run OpenClaw with your secure Tokfence routing."
+                    : "Tokfence will generate secure config automatically before start.",
+                actionTitle: primarySetupActionTitle,
+                status: containerStatusStep,
+                isActionEnabled: isSetupReadyForStart && !launchBusy
+            ),
+        ]
+    }
+
     var primaryAgentCard: TokfenceAgentCardModel {
         let statusText = launchResult.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let lastErrorText = lastError.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let combinedError = [lastError, launchStatusError]
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastErrorText = combinedError.lowercased()
         let status: TokfenceAgentStatus
         if launchBusy {
             status = .starting
         } else if statusText.contains("running") || !launchResult.containerID.isEmpty {
             status = .running
         } else if !lastErrorText.isEmpty &&
-            (lastErrorText.contains("docker") ||
-             lastErrorText.contains("launch") ||
+            (lastErrorText.contains("launch") ||
              lastErrorText.contains("container") ||
              lastErrorText.contains("daemon")) {
             status = .error
@@ -245,8 +355,8 @@ final class TokfenceAppViewModel: ObservableObject {
 
         let errorMessage: String
         if status == .error {
-            if !lastError.isEmpty {
-                errorMessage = lastError
+            if !combinedError.isEmpty {
+                errorMessage = combinedError
             } else if !launchResult.status.isEmpty {
                 errorMessage = "Launch status: \(launchResult.status)"
             } else {
@@ -264,6 +374,7 @@ final class TokfenceAppViewModel: ObservableObject {
             uptimeText: status == .running ? "Live now" : "",
             gatewayURL: launchResult.gatewayURL,
             dashboardURL: launchResult.dashboardURL,
+            gatewayToken: launchResult.gatewayToken,
             providers: launchResult.providers,
             recentActivity: Array(logs.prefix(3)),
             lastError: errorMessage,
@@ -281,6 +392,7 @@ final class TokfenceAppViewModel: ObservableObject {
                 uptimeText: "",
                 gatewayURL: "",
                 dashboardURL: "",
+                gatewayToken: "",
                 providers: [],
                 recentActivity: [],
                 lastError: "",
@@ -294,6 +406,7 @@ final class TokfenceAppViewModel: ObservableObject {
                 uptimeText: "",
                 gatewayURL: "",
                 dashboardURL: "",
+                gatewayToken: "",
                 providers: [],
                 recentActivity: [],
                 lastError: "",
@@ -307,9 +420,11 @@ final class TokfenceAppViewModel: ObservableObject {
         refreshTask = Task { [weak self] in
             guard let self else { return }
             await self.refreshAll()
+            await self.refreshLaunchState()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(4))
                 self.tickCount += 1
+                await self.refreshLaunchState()
                 if self.liveTailEnabled {
                     await self.refreshLogsOnly()
                 }
@@ -327,7 +442,10 @@ final class TokfenceAppViewModel: ObservableObject {
 
     func saveBinaryPath() {
         runner.configuredBinaryPath = binaryPath
-        Task { await refreshAll() }
+        Task {
+            await refreshAll()
+            await refreshLaunchState()
+        }
     }
 
     func refreshAll() async {
@@ -364,6 +482,7 @@ final class TokfenceAppViewModel: ObservableObject {
         } catch {
             setError(error.localizedDescription)
         }
+        await refreshLaunchState()
     }
 
     func updateDaemonIdentityWarning(_ status: TokfenceDaemonStatus) {
@@ -477,7 +596,15 @@ final class TokfenceAppViewModel: ObservableObject {
         }
 
         do {
-            try await ensureDaemonRunningForLaunch()
+            let daemon = try runner.fetchStatus()
+            daemonStatus = daemon
+            guard daemon.running else {
+                throw NSError(
+                    domain: "TokfenceDesktop",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Tokfence daemon is not running. Start it in setup first."]
+                )
+            }
             let parsedPort = try parseLaunchPort(portText)
             let result = try runner.launchStart(
                 image: image,
@@ -490,17 +617,20 @@ final class TokfenceAppViewModel: ObservableObject {
             launchResult = result
             launchLogsOutput = ""
             launchConfigOutput = ""
+            launchStatusError = ""
+            isDockerAvailable = true
             await refreshAll()
         } catch {
+            if isDockerAvailabilityError(error.localizedDescription) {
+                launchStatusError = error.localizedDescription
+                isDockerAvailable = false
+            }
             setError(error.localizedDescription)
         }
     }
 
     func launchStatus() async {
-        await runAndRefreshLaunch {
-            let status = try runner.launchStatus()
-            launchResult = status
-        }
+        await refreshLaunchState()
     }
 
     func launchConfig() async {
@@ -664,6 +794,10 @@ final class TokfenceAppViewModel: ObservableObject {
         NSWorkspace.shared.open(url)
     }
 
+    func surfaceError(_ message: String) {
+        setError(message)
+    }
+
     private func runAndRefresh(_ operation: () throws -> Void) async {
         do {
             clearError()
@@ -686,6 +820,24 @@ final class TokfenceAppViewModel: ObservableObject {
         await runAndRefresh(operation)
     }
 
+    func refreshLaunchState() async {
+        do {
+            let status = try runner.launchStatus()
+            launchResult = status
+            launchStatusError = ""
+            isDockerAvailable = true
+        } catch {
+            let message = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            launchStatusError = message
+            if isDockerAvailabilityError(message) {
+                isDockerAvailable = false
+                launchResult = TokfenceLaunchResult(configPath: launchResult.configPath, status: "stopped")
+            } else {
+                isDockerAvailable = true
+            }
+        }
+    }
+
     private func parseLaunchPort(_ value: String) throws -> Int? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -701,29 +853,21 @@ final class TokfenceAppViewModel: ObservableObject {
         return port
     }
 
-    private func ensureDaemonRunningForLaunch() async throws {
-        let status = try runner.fetchStatus()
-        if status.running {
-            daemonStatus = status
-            return
-        }
+    private func isDockerAvailabilityError(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("docker is not installed") ||
+            lower.contains("docker daemon is not running") ||
+            lower.contains("docker binary not found") ||
+            lower.contains("cannot connect to the docker daemon") ||
+            lower.contains("is the docker daemon running")
+    }
 
-        try runner.startDaemon()
-        let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
-            try await Task.sleep(nanoseconds: 300_000_000)
-            let current = try runner.fetchStatus()
-            if current.running {
-                daemonStatus = current
-                return
-            }
+    private func dockerActionTitle(for message: String) -> String {
+        let lower = message.lowercased()
+        if lower.contains("not installed") || lower.contains("binary not found") {
+            return "Open Docker Download"
         }
-
-        throw NSError(
-            domain: "TokfenceDesktop",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Tokfence daemon did not become reachable in time"]
-        )
+        return "Open Docker"
     }
 
     func dismissErrorToast() {

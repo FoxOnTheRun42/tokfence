@@ -1286,8 +1286,6 @@ private struct ProvidersSectionView: View {
 private struct AgentsSectionView: View {
     @ObservedObject var viewModel: TokfenceAppViewModel
 
-    @Environment(\.openURL) private var openURL
-
     // Agent config (will become dynamic with multiple agents)
     @State private var image = "ghcr.io/openclaw/openclaw:latest"
     @State private var containerName = "tokfence-openclaw"
@@ -1297,12 +1295,20 @@ private struct AgentsSectionView: View {
     @State private var openDashboard = true
     @State private var showConfig = false
     @State private var selectedRequestID: String? = nil
+    @State private var setupReadyPulse = false
+    @State private var previousSetupComplete = false
+    @State private var isOpeningAgentTarget = false
 
     private var agent: TokfenceAgentCardModel { viewModel.primaryAgentCard }
-    private var daemonReady: Bool { viewModel.snapshot.running }
-    private var vaultReady: Bool { !viewModel.snapshot.vaultProviders.isEmpty }
-    private var dockerReady: Bool { !viewModel.lastError.localizedCaseInsensitiveContains("docker") }
-    private var prerequisitesMet: Bool { vaultReady && dockerReady }
+    private var shouldShowGuidedSetup: Bool {
+        !viewModel.isSetupComplete && agent.status != .running && agent.status != .starting
+    }
+    private var shouldShowSetupReady: Bool {
+        viewModel.isSetupComplete && agent.status == .stopped
+    }
+    private var openActionsDisabled: Bool {
+        isOpeningAgentTarget || viewModel.launchBusy
+    }
 
     var body: some View {
         ScrollView {
@@ -1333,9 +1339,24 @@ private struct AgentsSectionView: View {
             .animation(TokfenceTheme.uiSpring, value: agent.status)
         }
         .onAppear {
-            if viewModel.launchResult.status.isEmpty {
-                Task { await viewModel.launchStatus() }
+            previousSetupComplete = viewModel.isSetupComplete
+            Task { await viewModel.refreshLaunchState() }
+        }
+        .onChange(of: viewModel.isSetupComplete) { _, isNowComplete in
+            if isNowComplete && !previousSetupComplete {
+                withAnimation(TokfenceTheme.uiSpring) {
+                    setupReadyPulse = true
+                }
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await MainActor.run {
+                        withAnimation(TokfenceTheme.uiAnimation) {
+                            setupReadyPulse = false
+                        }
+                    }
+                }
             }
+            previousSetupComplete = isNowComplete
         }
         .sheet(isPresented: $showConfig) {
             agentConfigSheet
@@ -1384,7 +1405,13 @@ private struct AgentsSectionView: View {
             case .error:
                 errorAgentContent
             case .stopped, .placeholder:
-                stoppedAgentContent
+                if shouldShowGuidedSetup {
+                    guidedSetupContent
+                } else if shouldShowSetupReady {
+                    setupReadyContent
+                } else {
+                    stoppedAgentContent
+                }
             }
         }
         .overlay(alignment: .leading) {
@@ -1422,19 +1449,76 @@ private struct AgentsSectionView: View {
 
     private var stoppedAgentContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            prerequisitesRow
             Button {
                 Task { await startAgent() }
             } label: {
-                Label("Start Securely", systemImage: "play.fill")
+                Label("Start", systemImage: "play.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(TokfenceTheme.healthy)
             .frame(minHeight: 44)
-            .disabled(!prerequisitesMet || viewModel.launchBusy)
-            .opacity(prerequisitesMet ? 1 : 0.55)
+            .disabled(viewModel.launchBusy)
         }
+    }
+
+    private var guidedSetupContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Guided Setup")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(TokfenceTheme.textPrimary)
+            Text("Tokfence will set up a security-first OpenClaw environment step by step.")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+
+            ForEach(viewModel.setupSteps) { step in
+                setupStepRow(step)
+            }
+
+            if let reason = viewModel.setupBlockingReason {
+                Text(reason)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private var setupReadyContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.healthy)
+                Text("Setup complete. OpenClaw is ready to start.")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textPrimary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(TokfenceTheme.healthy.opacity(setupReadyPulse ? 0.22 : 0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(TokfenceTheme.healthy.opacity(setupReadyPulse ? 0.85 : 0.45), lineWidth: setupReadyPulse ? 1.4 : 1)
+            )
+            .scaleEffect(setupReadyPulse ? 1.01 : 1.0)
+
+            Button {
+                Task { await startAgent() }
+            } label: {
+                Label("Start OpenClaw", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(TokfenceTheme.healthy)
+            .frame(minHeight: 44)
+            .disabled(viewModel.launchBusy)
+        }
+        .animation(TokfenceTheme.uiSpring, value: setupReadyPulse)
     }
 
     private var startingAgentContent: some View {
@@ -1465,23 +1549,40 @@ private struct AgentsSectionView: View {
 
             HStack(spacing: 10) {
                 Button {
-                    openAgentDashboard()
+                    Task {
+                        await openDashboardTapped()
+                    }
                 } label: {
                     Label("Open OpenClaw", systemImage: "rectangle.and.cursor.arrow")
                         .frame(maxWidth: .infinity)
                 }
+                .overlay {
+                    if isOpeningAgentTarget {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(.white)
+                    }
+                }
                 .buttonStyle(.borderedProminent)
                 .tint(TokfenceTheme.info)
-                .disabled(viewModel.launchBusy)
+                .disabled(openActionsDisabled)
 
                 Button {
-                    openAgentGateway()
+                    Task {
+                        await openGatewayTapped()
+                    }
                 } label: {
                     Label("Go to OpenClaw", systemImage: "arrow.up.right.square")
                         .frame(maxWidth: .infinity)
                 }
+                .overlay {
+                    if isOpeningAgentTarget {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
                 .buttonStyle(.bordered)
-                .disabled(viewModel.launchBusy)
+                .disabled(openActionsDisabled)
             }
 
             HStack(spacing: 10) {
@@ -1562,25 +1663,6 @@ private struct AgentsSectionView: View {
         }
     }
 
-    private var prerequisitesRow: some View {
-        HStack(spacing: 12) {
-            prereqDot(title: "Daemon", ok: daemonReady)
-            prereqDot(title: "Vault", ok: vaultReady)
-            prereqDot(title: "Docker", ok: dockerReady)
-            if !vaultReady {
-                Button("Add API key") {
-                    withAnimation(TokfenceTheme.uiSpring) {
-                        viewModel.selectedSection = .vault
-                    }
-                }
-                .buttonStyle(.link)
-                .font(.system(size: 11, weight: .medium))
-            }
-        }
-        .padding(10)
-        .background(TokfenceTheme.bgTertiary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
     private func placeholderCard(_ card: TokfenceAgentCardModel) -> some View {
         TokfenceCard {
             HStack(spacing: 12) {
@@ -1643,14 +1725,165 @@ private struct AgentsSectionView: View {
 
     // MARK: - Helpers
 
-    private func prereqDot(title: String, ok: Bool) -> some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(ok ? TokfenceTheme.healthy : TokfenceTheme.danger)
-                .frame(width: 7, height: 7)
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(ok ? TokfenceTheme.textSecondary : TokfenceTheme.textPrimary)
+    private func setupStepRow(_ step: TokfenceSetupStepState) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(setupStepColor(step.status))
+                    .frame(width: 8, height: 8)
+                Text(step.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textPrimary)
+                Spacer(minLength: 0)
+                Text(setupStepStatusLabel(step.status))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+            }
+
+            Text(step.reason)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textPrimary.opacity(0.92))
+                .lineSpacing(1.5)
+
+            switch step.status {
+            case .failed(let message):
+                Text(message)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.danger)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            default:
+                EmptyView()
+            }
+
+            HStack {
+                Spacer(minLength: 0)
+                setupStepTrailingControl(step)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(TokfenceTheme.bgTertiary.opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(stepRowStrokeColor(step.status), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func setupStepTrailingControl(_ step: TokfenceSetupStepState) -> some View {
+        if let actionTitle = step.actionTitle {
+            Button {
+                Task { await runSetupAction(step.id) }
+            } label: {
+                Label(actionTitle, systemImage: setupStepActionIcon(step.id))
+                    .frame(width: 190, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!step.isActionEnabled || viewModel.launchBusy)
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(TokfenceTheme.healthy)
+                Text("Completed")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(TokfenceTheme.textSecondary)
+            .frame(width: 190, alignment: .leading)
+        }
+    }
+
+    private func setupStepActionIcon(_ id: TokfenceSetupStepID) -> String {
+        switch id {
+        case .docker:
+            return "arrow.up.right.square"
+        case .daemon:
+            return "play.circle.fill"
+        case .vault:
+            return "key.fill"
+        case .container:
+            return "hammer.fill"
+        }
+    }
+
+    private func stepRowStrokeColor(_ status: TokfenceSetupStepStatus) -> Color {
+        switch status {
+        case .complete:
+            return TokfenceTheme.healthy.opacity(0.28)
+        case .failed:
+            return TokfenceTheme.danger.opacity(0.35)
+        case .inProgress:
+            return TokfenceTheme.info.opacity(0.35)
+        case .pending:
+            return TokfenceTheme.bgTertiary.opacity(0.4)
+        }
+    }
+
+    private func setupStepColor(_ status: TokfenceSetupStepStatus) -> Color {
+        switch status {
+        case .complete:
+            return TokfenceTheme.healthy
+        case .inProgress:
+            return TokfenceTheme.info
+        case .failed:
+            return TokfenceTheme.danger
+        case .pending:
+            return TokfenceTheme.textTertiary
+        }
+    }
+
+    private func setupStepStatusLabel(_ status: TokfenceSetupStepStatus) -> String {
+        switch status {
+        case .complete:
+            return "Done"
+        case .inProgress:
+            return "In progress"
+        case .failed:
+            return "Needs attention"
+        case .pending:
+            return "Pending"
+        }
+    }
+
+    private func runSetupAction(_ id: TokfenceSetupStepID) async {
+        switch id {
+        case .docker:
+            openDockerAction()
+        case .daemon:
+            await viewModel.startDaemon()
+        case .vault:
+            withAnimation(TokfenceTheme.uiSpring) {
+                viewModel.selectedSection = .vault
+            }
+        case .container:
+            await startAgent()
+        }
+    }
+
+    private func openDockerAction() {
+        let errorText = viewModel.launchStatusError.lowercased()
+        if errorText.contains("not installed") || errorText.contains("binary not found") {
+            if let url = URL(string: "https://docker.com/get-started") {
+                let opened = openURLOrFallback(url)
+                if !opened {
+                    viewModel.surfaceError("Could not open Docker download page.")
+                }
+            }
+            return
+        }
+
+        let dockerAppURL = URL(fileURLWithPath: "/Applications/Docker.app")
+        if FileManager.default.fileExists(atPath: dockerAppURL.path) {
+            NSWorkspace.shared.open(dockerAppURL)
+            return
+        }
+        if let url = URL(string: "https://docker.com/get-started") {
+            let opened = openURLOrFallback(url)
+            if !opened {
+                viewModel.surfaceError("Could not open Docker app or documentation URL.")
+            }
         }
     }
 
@@ -1676,25 +1909,80 @@ private struct AgentsSectionView: View {
             noPull: noPull,
             openDashboard: openDashboard
         )
-        if openDashboard,
-           viewModel.launchResult.status.lowercased() == "running",
-           let dashboard = URL(string: viewModel.launchResult.dashboardURL),
-           !viewModel.launchResult.dashboardURL.isEmpty {
-            openURL(dashboard)
+        if openDashboard {
+            await openAgentDashboard()
         }
     }
 
-    private func openAgentDashboard() {
-        if let url = URL(string: agent.dashboardURL), !agent.dashboardURL.isEmpty {
-            openURL(url)
+    private func openDashboardTapped() async {
+        await performOpenAction {
+            await openAgentDashboard()
+        }
+    }
+
+    private func openGatewayTapped() async {
+        await performOpenAction {
+            _ = await openAgentGateway()
+        }
+    }
+
+    private func performOpenAction(_ action: @escaping () async -> Void) async {
+        if isOpeningAgentTarget {
             return
         }
-        openAgentGateway()
+        isOpeningAgentTarget = true
+        defer { isOpeningAgentTarget = false }
+        await action()
     }
 
-    private func openAgentGateway() {
-        guard let url = URL(string: agent.gatewayURL), !agent.gatewayURL.isEmpty else { return }
-        openURL(url)
+    private func openAgentDashboard() async {
+        await refreshLaunchStateForOpen()
+        if let url = resolvedDashboardURL(), let resolved = URL(string: url) {
+            if openURLOrFallback(resolved) {
+                return
+            }
+            viewModel.surfaceError("Could not open dashboard URL: \(url)")
+            return
+        }
+        if await openAgentGateway() {
+            return
+        }
+        viewModel.surfaceError("OpenClaw dashboard is not available. Check container status or gateway port.")
+    }
+
+    private func openAgentGateway() async -> Bool {
+        await refreshLaunchStateForOpen()
+        guard let url = resolvedGatewayURL(), !url.isEmpty else {
+            viewModel.surfaceError("Gateway URL is not available. Start OpenClaw first.")
+            return false
+        }
+        guard let resolved = URL(string: url) else {
+            viewModel.surfaceError("Gateway URL is malformed.")
+            return false
+        }
+        if openURLOrFallback(resolved) {
+            return true
+        }
+        viewModel.surfaceError("Could not open gateway URL: \(url)")
+        return false
+    }
+
+    private func refreshLaunchStateForOpen() async {
+        for attempt in 0..<8 {
+            if !viewModel.launchBusy {
+                await viewModel.launchStatus()
+            }
+            if !viewModel.launchBusy && viewModel.primaryAgentCard.status == .running {
+                return
+            }
+            if !viewModel.launchResult.configPath.isEmpty,
+               (!viewModel.primaryAgentCard.dashboardURL.isEmpty || !viewModel.primaryAgentCard.gatewayURL.isEmpty) {
+                return
+            }
+            if attempt < 7 {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+        }
     }
 
     private func copyToClipboard(_ value: String) {
@@ -1702,6 +1990,33 @@ private struct AgentsSectionView: View {
         guard !trimmed.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(trimmed, forType: .string)
+    }
+
+    private func resolvedGatewayURL() -> String? {
+        let trimmed = agent.gatewayURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func resolvedDashboardURL() -> String? {
+        let trimmedDashboard = agent.dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedDashboard.isEmpty {
+            return trimmedDashboard
+        }
+        guard let gateway = resolvedGatewayURL() else {
+            return nil
+        }
+        let trimmedToken = agent.gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedToken.isEmpty {
+            return gateway
+        }
+        if gateway.contains("?") {
+            return "\(gateway)&token=\(trimmedToken)"
+        }
+        return "\(gateway)/?token=\(trimmedToken)"
+    }
+
+    private func openURLOrFallback(_ url: URL) -> Bool {
+        return NSWorkspace.shared.open(url)
     }
 }
 
