@@ -59,8 +59,15 @@ Tokfence protects against **key exfiltration** from agent config/runtime by keep
 
 Important boundary:
 - `127.0.0.1` binding limits network exposure, but it does not isolate local processes.
+- UDS hardens localhost transport when `socket_path` is set: clients prefer `/tmp`/`~/.tokfence/tokfence.sock` with `0660` permissions.
 - A compromised process on the same machine can still call the local proxy.
+- ImmuneFence adds capability-gated request handling with endpoint/scope restrictions and a runtime risk machine:
+  - `GREEN`: full scope
+  - `YELLOW`: reduced scope + shorter capability TTL
+  - `ORANGE`: safe-only routes
+  - `RED`: request block/revoke behavior
 - Budgets, revoke/restore, rate limits, and kill switch are the containment controls for this case.
+- Canary-based output scanning helps detect suspicious leakage in responses (red risk state).
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and disclosure policy.
 Production-readiness gates: [`docs/product-readiness-checklist.md`](docs/product-readiness-checklist.md)
@@ -92,6 +99,27 @@ For encrypted-file vault usage, set:
 ```bash
 export TOKFENCE_VAULT_PASSPHRASE='your-strong-passphrase'
 ```
+
+## macOS Distribution (Signing + Notarization)
+
+Public shipping of the desktop app requires Apple code signing and notarization.
+
+Required environment variables:
+
+- `TEAM_ID` (Apple developer team identifier)
+- `CODESIGN_IDENTITY` (e.g. `Developer ID Application: ...`)
+- `NOTARIZATION_PROFILE` (configured `xcrun notarytool` profile)
+
+Run from repo root:
+
+```bash
+TEAM_ID=ABCDE12345 \
+CODESIGN_IDENTITY="Developer ID Application: Example" \
+NOTARIZATION_PROFILE="tokfence-notary" \
+make desktop-release
+```
+
+See [`docs/macos-desktop.md`](docs/macos-desktop.md) for the full release flow.
 
 ## Commands
 

@@ -1370,9 +1370,12 @@ private struct AgentsSectionView: View {
                     .fill(TokfenceTheme.info.opacity(0.15))
                     .frame(width: 44, height: 44)
                     .overlay {
-                        Image(systemName: "hammer.fill")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(TokfenceTheme.info)
+                        TokfenceIcon(
+                            kind: .setupContainerLaunch,
+                            size: 20,
+                            primary: TokfenceTheme.info,
+                            accent: TokfenceTheme.info
+                        )
                     }
 
                 VStack(alignment: .leading, spacing: 3) {
@@ -1391,7 +1394,7 @@ private struct AgentsSectionView: View {
                 Button {
                     showConfig = true
                 } label: {
-                    Image(systemName: "gearshape")
+                    TokfenceIcon(kind: .navSettings, size: 14, primary: TokfenceTheme.textSecondary)
                 }
                 .buttonStyle(.bordered)
                 .help("Configure OpenClaw")
@@ -1429,20 +1432,38 @@ private struct AgentsSectionView: View {
             switch agent.status {
             case .starting:
                 HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
+                    TokfenceIcon(kind: .agentStarting, size: 14, primary: TokfenceTheme.info)
                     Text("Starting")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(TokfenceTheme.textSecondary)
                 }
             case .running:
-                TokfenceLiveBadge(text: "Running", color: TokfenceTheme.healthy, isActive: true)
+                HStack(spacing: 6) {
+                    TokfenceIcon(
+                        kind: .agentRunning,
+                        size: 14,
+                        primary: TokfenceTheme.textSecondary,
+                        accent: TokfenceTheme.healthy
+                    )
+                    TokfenceLiveBadge(text: "Running", color: TokfenceTheme.healthy, isActive: true)
+                }
             case .error:
-                TokfenceLiveBadge(text: "Error", color: TokfenceTheme.danger, isActive: false)
+                HStack(spacing: 6) {
+                    TokfenceIcon(
+                        kind: .agentError,
+                        size: 14,
+                        primary: TokfenceTheme.textSecondary,
+                        accent: TokfenceTheme.danger
+                    )
+                    TokfenceLiveBadge(text: "Error", color: TokfenceTheme.danger, isActive: false)
+                }
             case .stopped, .placeholder:
-                Text("Stopped")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(TokfenceTheme.textTertiary)
+                HStack(spacing: 6) {
+                    TokfenceIcon(kind: .agentStopped, size: 14, primary: TokfenceTheme.textTertiary)
+                    Text("Stopped")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textTertiary)
+                }
             }
         }
     }
@@ -1452,8 +1473,8 @@ private struct AgentsSectionView: View {
             Button {
                 Task { await startAgent() }
             } label: {
-                Label("Start", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                actionButtonLabel("Start", icon: .actionStartSecurely, iconColor: .white, accentColor: .white)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .accessibilityIdentifier("agents.start")
             .buttonStyle(.borderedProminent)
@@ -1474,13 +1495,6 @@ private struct AgentsSectionView: View {
 
             ForEach(viewModel.setupSteps) { step in
                 setupStepRow(step)
-            }
-
-            if let reason = viewModel.setupBlockingReason {
-                Text(reason)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(TokfenceTheme.textSecondary)
-                    .textSelection(.enabled)
             }
         }
     }
@@ -1511,8 +1525,8 @@ private struct AgentsSectionView: View {
             Button {
                 Task { await startAgent() }
             } label: {
-                Label("Start OpenClaw", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                actionButtonLabel("Start OpenClaw", icon: .actionStartSecurely, iconColor: .white, accentColor: .white)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
             .accessibilityIdentifier("agents.startOpenClaw")
             .buttonStyle(.borderedProminent)
@@ -1555,8 +1569,8 @@ private struct AgentsSectionView: View {
                         await openDashboardTapped()
                     }
                 } label: {
-                    Label("Open OpenClaw", systemImage: "rectangle.and.cursor.arrow")
-                        .frame(maxWidth: .infinity)
+                    actionButtonLabel("Open OpenClaw", icon: .actionOpenExternal, iconColor: .white, accentColor: .white)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .accessibilityIdentifier("agents.openDashboard")
                 .overlay {
@@ -1575,8 +1589,8 @@ private struct AgentsSectionView: View {
                         await openGatewayTapped()
                     }
                 } label: {
-                    Label("Go to OpenClaw", systemImage: "arrow.up.right.square")
-                        .frame(maxWidth: .infinity)
+                    actionButtonLabel("Go to OpenClaw", icon: .actionOpenExternal)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .accessibilityIdentifier("agents.openGateway")
                 .overlay {
@@ -1593,8 +1607,8 @@ private struct AgentsSectionView: View {
                 Button {
                     Task { await viewModel.launchStop() }
                 } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
+                    actionButtonLabel("Stop", icon: .actionStop)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .accessibilityIdentifier("agents.stop")
                 .buttonStyle(.bordered)
@@ -1604,8 +1618,8 @@ private struct AgentsSectionView: View {
                 Button {
                     Task { await viewModel.launchRestart() }
                 } label: {
-                    Label("Restart", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
+                    actionButtonLabel("Restart", icon: .actionRestart)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .accessibilityIdentifier("agents.restart")
                 .buttonStyle(.bordered)
@@ -1651,8 +1665,8 @@ private struct AgentsSectionView: View {
                 Button {
                     Task { await startAgent() }
                 } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
+                    actionButtonLabel("Retry", icon: .actionRetry, iconColor: .white, accentColor: .white)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .accessibilityIdentifier("agents.retryStart")
                 .buttonStyle(.borderedProminent)
@@ -1735,9 +1749,7 @@ private struct AgentsSectionView: View {
     private func setupStepRow(_ step: TokfenceSetupStepState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(setupStepColor(step.status))
-                    .frame(width: 8, height: 8)
+                setupStepStatusIcon(step.status)
                 Text(step.title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(TokfenceTheme.textPrimary)
@@ -1785,15 +1797,23 @@ private struct AgentsSectionView: View {
             Button {
                 Task { await runSetupAction(step.id) }
             } label: {
-                Label(actionTitle, systemImage: setupStepActionIcon(step.id))
-                    .frame(width: 190, alignment: .leading)
+                HStack(spacing: 7) {
+                    TokfenceIcon(
+                        kind: setupStepActionIcon(step.id),
+                        size: 14,
+                        primary: TokfenceTheme.textSecondary,
+                        accent: TokfenceTheme.accentPrimary
+                    )
+                    Text(actionTitle)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 190, alignment: .leading)
             }
             .buttonStyle(.bordered)
             .disabled(!step.isActionEnabled || viewModel.launchBusy)
         } else {
             HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(TokfenceTheme.healthy)
+                TokfenceIcon(kind: .stepComplete, size: 14, primary: TokfenceTheme.healthy, accent: TokfenceTheme.healthy)
                 Text("Completed")
             }
             .font(.system(size: 11, weight: .semibold))
@@ -1802,16 +1822,43 @@ private struct AgentsSectionView: View {
         }
     }
 
-    private func setupStepActionIcon(_ id: TokfenceSetupStepID) -> String {
+    @ViewBuilder
+    private func setupStepStatusIcon(_ status: TokfenceSetupStepStatus) -> some View {
+        switch status {
+        case .complete:
+            TokfenceIcon(kind: .stepComplete, size: 14, primary: TokfenceTheme.healthy, accent: TokfenceTheme.healthy)
+        case .inProgress:
+            TokfenceIcon(kind: .stepActive, size: 14, primary: TokfenceTheme.info, accent: TokfenceTheme.info)
+        case .pending:
+            TokfenceIcon(kind: .stepPending, size: 14, primary: TokfenceTheme.textTertiary)
+        case .failed:
+            TokfenceIcon(kind: .actionRetry, size: 14, primary: TokfenceTheme.danger, accent: TokfenceTheme.danger)
+        }
+    }
+
+    private func setupStepActionIcon(_ id: TokfenceSetupStepID) -> TokfenceIconKind {
         switch id {
         case .docker:
-            return "arrow.up.right.square"
+            return .setupDocker
         case .daemon:
-            return "play.circle.fill"
+            return .setupDaemon
         case .vault:
-            return "key.fill"
+            return .setupVault
         case .container:
-            return "hammer.fill"
+            return .setupContainerLaunch
+        }
+    }
+
+    private func actionButtonLabel(
+        _ text: String,
+        icon: TokfenceIconKind,
+        iconColor: Color = Color.primary,
+        accentColor: Color = TokfenceTheme.accentPrimary
+    ) -> some View {
+        HStack(spacing: 8) {
+            TokfenceIcon(kind: icon, size: 14, primary: iconColor, accent: accentColor)
+            Text(text)
+                .font(.system(size: 12, weight: .semibold))
         }
     }
 

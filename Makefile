@@ -1,9 +1,11 @@
 BINARY=tokfence
 CMD=./cmd/tokfence
 DESKTOP_DIR=./apps/TokfenceDesktop
+DESKTOP_DIST_DIR=./build/desktop
 
 .PHONY: build test install lint desktop-generate desktop-build
 .PHONY: smoke-e2e smoke-e2e-openai smoke-e2e-anthropic
+.PHONY: desktop-release
 
 build:
 	@mkdir -p bin
@@ -24,6 +26,9 @@ desktop-generate:
 
 desktop-build:
 	cd $(DESKTOP_DIR) && xcodebuild -project TokfenceDesktop.xcodeproj -scheme TokfenceDesktop -configuration Debug CODE_SIGNING_ALLOWED=NO build
+
+desktop-release:
+	DESKTOP_DIST_DIR=$(DESKTOP_DIST_DIR) ./scripts/notarize-macos.sh
 
 smoke-e2e-openai:
 	TOKFENCE_PROVIDER=openai TOKFENCE_SMOKE_KEEP_DAEMON=0 ./scripts/live-e2e.sh

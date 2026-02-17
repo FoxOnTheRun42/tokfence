@@ -139,13 +139,13 @@ func runForeground(cfg config.Config, daemonNonce string) error {
 			return fmt.Errorf("generate daemon nonce: %w", err)
 		}
 	}
-	if err := writePIDFile(os.Getpid(), server.Addr(), execPath, os.Getuid(), nonce); err != nil {
+	if err := writePIDFile(os.Getpid(), server.ListenAddr(), execPath, os.Getuid(), nonce); err != nil {
 		return err
 	}
 	defer removePIDFile()
 
 	if !outputJSON {
-		fmt.Printf("tokfence daemon listening on http://%s\n", server.Addr())
+		fmt.Printf("tokfence daemon listening on %s\n", formatDaemonAddress(server.ListenAddr()))
 	}
 	err = server.Run(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
@@ -185,10 +185,33 @@ func spawnBackground(cfg config.Config, daemonNonce string) error {
 		return fmt.Errorf("detach daemon process: %w", err)
 	}
 	if outputJSON {
-		return printJSON(map[string]any{"status": "starting", "addr": fmt.Sprintf("%s:%d", cfg.Daemon.Host, cfg.Daemon.Port)})
+		return printJSON(map[string]any{
+			"status":   "starting",
+			"addr":     daemonDisplayAddress(cfg),
+			"socket":   cfg.Daemon.SocketPath,
+			"pid_file": pidFilePath(),
+		})
 	}
-	fmt.Printf("tokfence daemon starting in background (http://%s:%d)\n", cfg.Daemon.Host, cfg.Daemon.Port)
+	fmt.Printf("tokfence daemon starting in background (%s)\n", daemonDisplayAddress(cfg))
 	return nil
+}
+
+func daemonDisplayAddress(cfg config.Config) string {
+	if strings.TrimSpace(cfg.Daemon.SocketPath) != "" {
+		return "unix:" + cfg.Daemon.SocketPath
+	}
+	return fmt.Sprintf("http://%s:%d", cfg.Daemon.Host, cfg.Daemon.Port)
+}
+
+func formatDaemonAddress(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "unknown"
+	}
+	if strings.HasPrefix(addr, "unix:") || strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return "http://" + addr
 }
 
 func newStopCommand() *cobra.Command {
@@ -228,6 +251,31 @@ func newStopCommand() *cobra.Command {
 	}
 }
 
+func probeDaemon(cfg config.Config) (bool, string, string, error) {
+	return probeDaemonWithTimeout(cfg, 500*time.Millisecond)
+}
+
+func probeDaemonWithTimeout(cfg config.Config, timeout time.Duration) (bool, string, string, error) {
+	socketPath := strings.TrimSpace(cfg.Daemon.SocketPath)
+	if socketPath != "" {
+		conn, err := net.DialTimeout("unix", socketPath, timeout)
+		if err == nil {
+			_ = conn.Close()
+			return true, "unix", "unix:" + socketPath, nil
+		}
+	}
+	addr := net.JoinHostPort(cfg.Daemon.Host, strconv.Itoa(cfg.Daemon.Port))
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err == nil {
+		_ = conn.Close()
+		return true, "tcp", addr, nil
+	}
+	if socketPath != "" {
+		return false, "unix+tcp", addr, err
+	}
+	return false, "tcp", addr, err
+}
+
 func newStatusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -239,25 +287,33 @@ func newStatusCommand() *cobra.Command {
 			}
 			state, err := readPIDFile()
 			if err != nil {
-				addr := fmt.Sprintf("%s:%d", cfg.Daemon.Host, cfg.Daemon.Port)
-				conn, probeErr := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-				if probeErr == nil {
-					_ = conn.Close()
+				reachable, probeNetwork, probeAddr, probeErr := probeDaemon(cfg)
+				if reachable {
 					if outputJSON {
 						return printJSON(map[string]any{
 							"running": true,
-							"addr":    addr,
+							"addr":    probeAddr,
+							"source":  "probe-" + probeNetwork,
 							"managed": false,
-							"source":  "port_probe",
 						})
 					}
-					fmt.Printf("tokfence daemon is running\nAddr: %s\nManaged: no (pid file missing)\n", addr)
+					fmt.Printf("tokfence daemon is running\nAddr: %s\nManaged: no (pid file missing)\n", formatDaemonAddress(probeAddr))
 					return nil
 				}
 				if outputJSON {
-					return printJSON(map[string]any{"running": false})
+					return printJSON(map[string]any{
+						"running": false,
+						"error":   probeErr.Error(),
+						"source":  "probe-" + probeNetwork,
+						"addr":    probeAddr,
+					})
 				}
-				fmt.Println("tokfence daemon is not running")
+				if probeErr != nil {
+					fmt.Printf("tokfence daemon is not running (%v)\n", probeErr)
+				}
+				if probeErr == nil {
+					fmt.Println("tokfence daemon is not running")
+				}
 				return nil
 			}
 			running, reason := protectedProcessState(state)
@@ -274,11 +330,26 @@ func newStatusCommand() *cobra.Command {
 				fmt.Printf("tokfence daemon is not running (%s)\n", reason)
 				return nil
 			}
+			reachable, probeNetwork, probeAddr, probeErr := probeDaemon(cfg)
+			if !reachable {
+				if outputJSON {
+					return printJSON(map[string]any{
+						"running": false,
+						"pid":     state.PID,
+						"addr":    formatDaemonAddress(state.Addr),
+						"error":   probeErr.Error(),
+						"source":  "probe-" + probeNetwork,
+					})
+				}
+				fmt.Printf("tokfence daemon is not running (not reachable at %s)\n", formatDaemonAddress(state.Addr))
+				return nil
+			}
 			if outputJSON {
 				return printJSON(map[string]any{
 					"running": running,
 					"pid":     state.PID,
-					"addr":    state.Addr,
+					"addr":    probeAddr,
+					"source":  "pid",
 					"started": state.StartedAt,
 				})
 			}
@@ -286,7 +357,7 @@ func newStatusCommand() *cobra.Command {
 				fmt.Println("tokfence daemon is not running")
 				return nil
 			}
-			fmt.Printf("tokfence daemon is running\nPID: %d\nAddr: %s\nStarted: %s\n", state.PID, state.Addr, state.StartedAt)
+			fmt.Printf("tokfence daemon is running\nPID: %d\nAddr: %s\nStarted: %s\n", state.PID, formatDaemonAddress(probeAddr), state.StartedAt)
 			return nil
 		},
 	}
@@ -1354,12 +1425,8 @@ func newSetupCommand() *cobra.Command {
 
 			testResult := map[string]any{}
 			if runTest {
-				addr := net.JoinHostPort(cfg.Daemon.Host, strconv.Itoa(cfg.Daemon.Port))
-				conn, dialErr := net.DialTimeout("tcp", addr, 2*time.Second)
-				daemonReachable := dialErr == nil
-				if conn != nil {
-					_ = conn.Close()
-				}
+				reachable, probeNetwork, probeAddr, _ := probeDaemonWithTimeout(cfg, 2*time.Second)
+				daemonReachable := reachable
 				testResult["daemon_reachable"] = daemonReachable
 
 				v, vErr := vault.NewDefault(vault.Options{})
@@ -1387,11 +1454,12 @@ func newSetupCommand() *cobra.Command {
 							"base_url":    baseURL,
 							"config_line": configLine,
 							"test":        testResult,
+							"probe":       map[string]any{"network": probeNetwork, "addr": probeAddr},
 							"ready":       false,
 						})
 					}
 					if !daemonReachable {
-						return fmt.Errorf("setup test failed: daemon is not reachable on %s", addr)
+						return fmt.Errorf("setup test failed: daemon is not reachable on %s", probeAddr)
 					}
 					return fmt.Errorf("setup test failed: no key configured for provider %q", selectedProvider)
 				}
@@ -1968,7 +2036,7 @@ func renderSwiftBarWidget(snapshot widgetSnapshot) {
 	if snapshot.Running {
 		fmt.Printf("Status: Running ✅ (PID %d)\n", snapshot.PID)
 		if snapshot.Addr != "" {
-			fmt.Printf("Address: http://%s\n", snapshot.Addr)
+			fmt.Printf("Address: %s\n", formatDaemonAddress(snapshot.Addr))
 		}
 	} else {
 		fmt.Println("Status: Offline")

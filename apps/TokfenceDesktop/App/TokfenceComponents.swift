@@ -164,15 +164,23 @@ struct TokfenceProviderBadge: View {
     let active: Bool
 
     var body: some View {
-        Text(TokfenceFormatting.providerLabel(provider))
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(active ? Color.white : TokfenceTheme.textSecondary)
-            .padding(.vertical, 3)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
-                    .fill(active ? TokfenceTheme.providerColor(provider) : TokfenceTheme.bgTertiary)
+        HStack(spacing: 4) {
+            TokfenceIcon(
+                kind: TokfenceSymbol.providerKind(provider),
+                size: 11,
+                primary: active ? Color.white : TokfenceTheme.textSecondary,
+                accent: active ? Color.white : TokfenceTheme.textSecondary
             )
+            Text(TokfenceFormatting.providerLabel(provider))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(active ? Color.white : TokfenceTheme.textSecondary)
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
+                .fill(active ? TokfenceTheme.providerColor(provider) : TokfenceTheme.bgTertiary)
+        )
     }
 }
 
@@ -262,10 +270,12 @@ struct TokfenceNavItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: TokfenceTheme.spaceSm) {
-                Image(systemName: icon)
-                    .font(.system(size: style == .primary ? 15 : 14, weight: .medium))
-                    .frame(width: 16)
-                    .foregroundStyle(isSelected ? TokfenceTheme.accentPrimary : TokfenceTheme.textTertiary)
+                TokfenceSymbol(
+                    systemName: icon,
+                    size: style == .primary ? 15 : 14,
+                    color: isSelected ? TokfenceTheme.accentPrimary : TokfenceTheme.textTertiary
+                )
+                .frame(width: 16)
                 Text(title)
                     .font(.system(size: style == .primary ? 14 : TokfenceTheme.fontBody, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(isSelected ? TokfenceTheme.textPrimary : TokfenceTheme.textSecondary)

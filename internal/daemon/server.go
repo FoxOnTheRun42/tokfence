@@ -3,6 +3,8 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,8 +13,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -23,11 +27,13 @@ import (
 	"github.com/macfox/tokfence/internal/logger"
 	"github.com/macfox/tokfence/internal/process"
 	"github.com/macfox/tokfence/internal/proxy"
+	"github.com/macfox/tokfence/internal/security"
 	"github.com/macfox/tokfence/internal/vault"
 )
 
 const (
 	defaultRequestBodyLimit = 8 * 1024 * 1024
+	capabilityHeaderName    = "X-Tokfence-Capability"
 )
 
 func maxRequestBodyLimit() int64 {
@@ -47,11 +53,23 @@ type Server struct {
 	budget            *budget.Engine
 	limiter           *RateLimiter
 	httpSrv           *http.Server
+	riskMachine       *security.RiskMachine
 	httpClient        *http.Client
 	logger            *slog.Logger
+	canary            string
+	socketPath        string
+	mu                sync.Mutex
+	serverListeners   []listenerHandle
 	startedAt         time.Time
 	isRunning         atomic.Bool
 	maxRequestBodyRaw int64
+}
+
+type listenerHandle struct {
+	network  string
+	address  string
+	listener net.Listener
+	server   *http.Server
 }
 
 func NewServer(cfg config.Config, v vault.Vault, store *logger.LogStore, engine *budget.Engine) *Server {
@@ -63,20 +81,38 @@ func NewServer(cfg config.Config, v vault.Vault, store *logger.LogStore, engine 
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
+	canary := newCanary()
 	return &Server{
 		cfg:               cfg,
 		vault:             v,
 		store:             store,
 		budget:            engine,
 		limiter:           NewRateLimiter(),
+		riskMachine:       security.NewRiskMachine(security.RiskDefaults{InitialState: cfg.RiskDefaults.InitialState}),
+		socketPath:        cfg.Daemon.SocketPath,
 		httpClient:        &http.Client{Transport: transport},
 		logger:            slog.New(slog.NewJSONHandler(os.Stderr, nil)),
+		canary:            canary,
 		maxRequestBodyRaw: maxRequestBodyLimit(),
 	}
 }
 
 func (s *Server) Addr() string {
 	return fmt.Sprintf("%s:%d", s.cfg.Daemon.Host, s.cfg.Daemon.Port)
+}
+
+func (s *Server) ListenAddr() string {
+	if strings.TrimSpace(s.socketPath) != "" {
+		return "unix:" + s.socketPath
+	}
+	return s.Addr()
+}
+
+func (s *Server) riskState() security.RiskState {
+	if s.riskMachine == nil {
+		return security.RiskGreen
+	}
+	return s.riskMachine.State()
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -88,7 +124,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/__tokfence/health", s.handleHealth)
 	mux.HandleFunc("/", s.handleProxy)
 
-	s.httpSrv = &http.Server{
+	httpSrvTemplate := &http.Server{
 		Addr:              s.Addr(),
 		Handler:           mux,
 		ReadHeaderTimeout: 15 * time.Second,
@@ -96,17 +132,78 @@ func (s *Server) Run(ctx context.Context) error {
 		WriteTimeout:      10 * time.Minute,
 		IdleTimeout:       120 * time.Second,
 	}
+	listeners := []listenerHandle{}
 
-	errCh := make(chan error, 1)
-	go func() {
-		s.isRunning.Store(true)
-		err := s.httpSrv.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
+	listenerCount := 0
+	if strings.TrimSpace(s.socketPath) != "" {
+		path := s.socketPath
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale unix socket: %w", err)
 		}
-		errCh <- nil
-	}()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("create socket directory: %w", err)
+		}
+		ln, err := net.Listen("unix", path)
+		if err != nil {
+			s.logger.Warn("unix listener failed", "error", err)
+		} else {
+			if err := os.Chmod(path, 0o660); err != nil {
+				_ = ln.Close()
+				return fmt.Errorf("chmod socket: %w", err)
+			}
+			listenerSrv := *httpSrvTemplate
+			server := &listenerSrv
+			server.Addr = path
+			listeners = append(listeners, listenerHandle{
+				network:  "unix",
+				address:  path,
+				listener: ln,
+				server:   server,
+			})
+			listenerCount++
+		}
+	}
+	if s.cfg.Daemon.Port > 0 {
+		addr := s.Addr()
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			s.logger.Warn("tcp listener failed", "error", err)
+		} else {
+			listenerSrv := *httpSrvTemplate
+			server := &listenerSrv
+			listeners = append(listeners, listenerHandle{
+				network:  "tcp",
+				address:  addr,
+				listener: ln,
+				server:   server,
+			})
+			listenerCount++
+		}
+	}
+	if listenerCount == 0 {
+		return errors.New("no listeners available")
+	}
+
+	s.mu.Lock()
+	s.serverListeners = listeners
+	if len(listeners) > 0 {
+		s.httpSrv = listeners[0].server
+	}
+	s.mu.Unlock()
+
+	errCh := make(chan error, listenerCount)
+	s.isRunning.Store(true)
+	for _, listener := range listeners {
+		l := listener
+		go func() {
+			err := l.server.Serve(l.listener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	select {
 	case <-ctx.Done():
@@ -123,14 +220,121 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+func newCanary() string {
+	raw := make([]byte, 48)
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func (s *Server) resolveCapabilityState() security.RiskState {
+	state := s.riskState()
+	if state == "" {
+		return security.RiskGreen
+	}
+	return state
+}
+
+func (s *Server) validateOrIssueCapability(r *http.Request) (security.Capability, string, error) {
+	var (
+		state  = s.resolveCapabilityState()
+		header = strings.TrimSpace(r.Header.Get(capabilityHeaderName))
+	)
+	header = strings.TrimSpace(header)
+
+	if !s.cfg.Daemon.ImmuneEnabled {
+		token, err := security.MintCapability(
+			s.cfg.Daemon.DefaultScope,
+			s.cfg.Daemon.DefaultClientID,
+			s.cfg.Daemon.DefaultSessionID,
+			string(state),
+			12*time.Minute,
+		)
+		if err != nil {
+			return security.Capability{}, "", err
+		}
+		capability, err := security.ValidateCapability(token)
+		return capability, token, err
+	}
+
+	if header == "" {
+		// Backward compatibility and local-native clients: synthesize a scoped token per request.
+		// A client token must be explicitly supplied for strict enforcement in strict mode.
+		scope := security.NormalizeScope(s.cfg.Daemon.DefaultScope)
+		token, err := security.MintCapability(
+			scope,
+			s.cfg.Daemon.DefaultClientID,
+			s.cfg.Daemon.DefaultSessionID,
+			string(state),
+			12*time.Minute,
+		)
+		if err != nil {
+			return security.Capability{}, "", err
+		}
+		capability, err := security.ValidateCapability(token)
+		return capability, token, err
+	}
+
+	capability, err := security.ValidateCapability(header)
+	if err != nil {
+		return security.Capability{}, header, err
+	}
+	capability.Scope = security.NormalizeScope(capability.Scope)
+	return capability, header, nil
+}
+
+func (s *Server) riskAwareCapabilityAllowed(capability security.Capability, path string, method string, routeState security.RiskState) bool {
+	scope := security.NormalizeScope(capability.Scope)
+	effectiveState := security.MaxRisk(routeState, security.ParseRiskStateMust(capability.RiskState))
+	if effectiveState == security.RiskRed {
+		return false
+	}
+	return s.riskMachine.IsRequestAllowedForState(effectiveState, scope, method, path)
+}
+
+func (s *Server) applySensorSignals(ctx context.Context, capability security.Capability, method, path string, body []byte) {
+	if security.DetectDisallowedEndpoint(path) {
+		s.riskMachine.Escalate(security.RiskEventEndpoint)
+	}
+	_ = ctx
+	_ = capability
+	if security.DetectSecretReference(string(body)) {
+		s.riskMachine.Escalate(security.RiskEventSecretLeak)
+	}
+	if security.DetectSystemOverride(string(body)) {
+		s.riskMachine.Escalate(security.RiskEventOverride)
+	}
+
+	_ = capability
+}
+
+func (s *Server) checkCanaryForResponse(response []byte) bool {
+	return security.DetectCanaryLeak(response, s.canary)
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.httpSrv == nil {
+	s.isRunning.Store(false)
+	s.mu.Lock()
+	listeners := append([]listenerHandle(nil), s.serverListeners...)
+	s.serverListeners = nil
+	s.mu.Unlock()
+
+	if len(listeners) == 0 {
 		return nil
 	}
-	err := s.httpSrv.Shutdown(ctx)
-	s.isRunning.Store(false)
-	if err != nil {
-		return fmt.Errorf("shutdown server: %w", err)
+	for _, item := range listeners {
+		if item.server != nil {
+			if err := item.server.Shutdown(ctx); err != nil {
+				s.logger.Warn("listener shutdown failed", "network", item.network, "address", item.address, "error", err)
+			}
+			if item.listener != nil {
+				_ = item.listener.Close()
+			}
+		}
+	}
+	if strings.TrimSpace(s.socketPath) != "" {
+		_ = os.Remove(s.socketPath)
 	}
 	return nil
 }
@@ -140,7 +344,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	_ = jsonResponse(w, map[string]any{
 		"name":       "tokfence",
 		"status":     "ok",
-		"addr":       s.Addr(),
+		"addr":       s.ListenAddr(),
+		"risk_state": s.riskState(),
+		"canary":     "",
 		"started_at": s.startedAt.Format(time.RFC3339),
 	})
 }
@@ -164,6 +370,28 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 			Message:   err.Error(),
 			RequestID: requestID,
 		}, map[string]any{})
+		return
+	}
+
+	capability, _, capabilityErr := s.validateOrIssueCapability(r)
+	if capabilityErr != nil {
+		writeJSONError(w, http.StatusForbidden, errorPayload{
+			Type:      "tokfence_capability_rejected",
+			Message:   capabilityErr.Error(),
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, nil)
+		return
+	}
+	if !s.riskAwareCapabilityAllowed(capability, route.Path, r.Method, s.riskState()) {
+		writeJSONError(w, http.StatusForbidden, errorPayload{
+			Type:      "tokfence_access_denied",
+			Message:   "request blocked by current risk policy",
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, map[string]any{
+			"risk_state": s.riskState(),
+		})
 		return
 	}
 
@@ -222,6 +450,18 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeReadBodyFailed(w, requestID, err)
+		return
+	}
+	s.applySensorSignals(ctx, capability, r.Method, route.Path, requestBody)
+	if state := s.riskMachine.State(); state == security.RiskRed {
+		writeJSONError(w, http.StatusForbidden, errorPayload{
+			Type:      "tokfence_risk_restricted",
+			Message:   "session blocked due to risk escalation",
+			RequestID: requestID,
+			Provider:  route.Provider,
+		}, map[string]any{
+			"risk_state": state,
+		})
 		return
 	}
 
@@ -330,6 +570,9 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		usage = logger.ExtractUsageFromSSE(route.Provider, responseCapture.Bytes())
 	} else {
 		usage = logger.ExtractUsageFromResponse(route.Provider, responseCapture.Bytes())
+	}
+	if s.checkCanaryForResponse(responseCapture.Bytes()) {
+		s.riskMachine.Escalate(security.RiskEventCanaryLeak)
 	}
 
 	errorType := ""

@@ -8,17 +8,32 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/macfox/tokfence/internal/security"
 )
 
 const (
 	DefaultPort          = 9471
 	DefaultHost          = "127.0.0.1"
 	DefaultRetentionDays = 90
+	DefaultSocketPath    = "~/.tokfence/tokfence.sock"
+)
+
+const (
+	maxUnixSocketPathLen = 103
 )
 
 type DaemonConfig struct {
-	Port int    `toml:"port"`
-	Host string `toml:"host"`
+	Port             int    `toml:"port"`
+	Host             string `toml:"host"`
+	SocketPath       string `toml:"socket_path"`
+	ImmuneEnabled    bool   `toml:"immune_enabled"`
+	DefaultClientID  string `toml:"default_client_id"`
+	DefaultSessionID string `toml:"default_session_id"`
+	DefaultScope     string `toml:"default_capability_scope"`
+}
+
+type RiskDefaultsConfig struct {
+	InitialState string `toml:"initial_state"`
 }
 
 type LoggingConfig struct {
@@ -37,6 +52,7 @@ type ProviderConfig struct {
 
 type Config struct {
 	Daemon        DaemonConfig              `toml:"daemon"`
+	RiskDefaults  RiskDefaultsConfig        `toml:"risk_defaults"`
 	Logging       LoggingConfig             `toml:"logging"`
 	Notifications NotificationsConfig       `toml:"notifications"`
 	Providers     map[string]ProviderConfig `toml:"providers"`
@@ -71,8 +87,16 @@ func DefaultProviders() map[string]ProviderConfig {
 func Default() Config {
 	return Config{
 		Daemon: DaemonConfig{
-			Port: DefaultPort,
-			Host: DefaultHost,
+			Port:             DefaultPort,
+			Host:             DefaultHost,
+			SocketPath:       DefaultSocketPath,
+			ImmuneEnabled:    true,
+			DefaultClientID:  "tokfence-cli",
+			DefaultSessionID: "default",
+			DefaultScope:     "proxy",
+		},
+		RiskDefaults: RiskDefaultsConfig{
+			InitialState: "GREEN",
 		},
 		Logging: LoggingConfig{
 			DBPath:        "~/.tokfence/tokfence.db",
@@ -91,6 +115,10 @@ func DefaultConfigPath() string {
 
 func DataDir() string {
 	return "~/.tokfence"
+}
+
+func DefaultSocketPathValue() string {
+	return DefaultSocketPath
 }
 
 func ExpandPath(path string) (string, error) {
@@ -153,6 +181,30 @@ func Load(path string) (Config, error) {
 	if loaded.Daemon.Host != "" {
 		cfg.Daemon.Host = loaded.Daemon.Host
 	}
+	if loaded.Daemon.SocketPath != "" {
+		cfg.Daemon.SocketPath = loaded.Daemon.SocketPath
+	}
+	if loaded.Daemon.DefaultClientID != "" {
+		cfg.Daemon.DefaultClientID = loaded.Daemon.DefaultClientID
+	}
+	if loaded.Daemon.DefaultSessionID != "" {
+		cfg.Daemon.DefaultSessionID = loaded.Daemon.DefaultSessionID
+	}
+	if loaded.Daemon.DefaultScope != "" {
+		cfg.Daemon.DefaultScope = loaded.Daemon.DefaultScope
+	}
+	if loaded.Daemon.ImmuneEnabled != cfg.Daemon.ImmuneEnabled {
+		cfg.Daemon.ImmuneEnabled = loaded.Daemon.ImmuneEnabled
+	}
+	if loaded.RiskDefaults.InitialState != "" {
+		state, err := security.ParseRiskState(loaded.RiskDefaults.InitialState)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid risk_defaults.initial_state: %w", err)
+		}
+		cfg.RiskDefaults = RiskDefaultsConfig{
+			InitialState: string(state),
+		}
+	}
 	if loaded.Logging.DBPath != "" {
 		cfg.Logging.DBPath = loaded.Logging.DBPath
 	}
@@ -191,6 +243,20 @@ func Load(path string) (Config, error) {
 
 	if cfg.Daemon.Host == "" {
 		cfg.Daemon.Host = DefaultHost
+	}
+	if cfg.Daemon.SocketPath == "" {
+		cfg.Daemon.SocketPath = DefaultSocketPath
+	}
+	cfg.Daemon.SocketPath, err = ExpandPath(cfg.Daemon.SocketPath)
+	if err != nil {
+		return cfg, fmt.Errorf("expand socket path: %w", err)
+	}
+	if len([]byte(cfg.Daemon.SocketPath)) > maxUnixSocketPathLen {
+		return cfg, fmt.Errorf("socket path too long: %d bytes, max %d", len([]byte(cfg.Daemon.SocketPath)), maxUnixSocketPathLen)
+	}
+	socketDir := filepath.Dir(cfg.Daemon.SocketPath)
+	if err := os.MkdirAll(socketDir, 0o700); err != nil {
+		return cfg, fmt.Errorf("create socket directory: %w", err)
 	}
 	if cfg.Daemon.Host == "0.0.0.0" {
 		return cfg, errors.New("insecure daemon.host=0.0.0.0 is not allowed")

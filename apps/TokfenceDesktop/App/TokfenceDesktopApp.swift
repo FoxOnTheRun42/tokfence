@@ -21,7 +21,12 @@ struct TokfenceDesktopApp: App {
             TokfenceMenuBarView(viewModel: viewModel)
                 .frame(width: 280)
         } label: {
-            Image(systemName: viewModel.snapshot.running ? "hexagon.fill" : "hexagon")
+            TokfenceIcon(
+                kind: viewModel.snapshot.killSwitchActive ? .menuAlert : (viewModel.snapshot.running ? .menuActive : .menuInactive),
+                size: 16,
+                primary: .black,
+                accent: .black
+            )
         }
     }
 }

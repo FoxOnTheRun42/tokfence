@@ -243,19 +243,6 @@ final class TokfenceAppViewModel: ObservableObject {
         isSetupComplete ? "Start" : "Set up OpenClaw"
     }
 
-    var setupBlockingReason: String? {
-        if !isDockerAvailable {
-            return launchStatusError.isEmpty ? "Docker is required to run OpenClaw." : launchStatusError
-        }
-        if !daemonStatus.running {
-            return "Tokfence daemon is not running."
-        }
-        if !hasVaultSetupKey {
-            return "Add at least one provider API key in Vault."
-        }
-        return nil
-    }
-
     var setupSteps: [TokfenceSetupStepState] {
         let dockerStatus: TokfenceSetupStepStatus = isDockerAvailable
             ? .complete

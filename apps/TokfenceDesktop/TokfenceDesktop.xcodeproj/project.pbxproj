@@ -24,6 +24,7 @@
 		AB52EB0C45291AEEE46542EB /* TokfenceComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 247623557685C9568B7E8D89 /* TokfenceComponents.swift */; };
 		BD1B8A7D6E6AC16F68559C22 /* TokfenceTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = E930DD8DDF1A849D8C3615DB /* TokfenceTheme.swift */; };
 		CF2FD3B91E79EB40A4B1719B /* TokfenceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EF891328B65B82431F5FFE8 /* TokfenceModels.swift */; };
+		E79C7ABE3857009F7824A6D2 /* TokfenceIcons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5028EC1E47D6F0AE81587094 /* TokfenceIcons.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 		3FDB93BDF804F8E1EEC47CDD /* TokfenceFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokfenceFormatting.swift; sourceTree = "<group>"; };
 		48B6F85CD95CCB4A95C93246 /* TokfenceDesktop.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TokfenceDesktop.entitlements; sourceTree = "<group>"; };
 		4F1BDF625AAB8A18741492FB /* TokfenceWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TokfenceWidgetExtension.entitlements; sourceTree = "<group>"; };
+		5028EC1E47D6F0AE81587094 /* TokfenceIcons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokfenceIcons.swift; sourceTree = "<group>"; };
 		6706C388832EFE18FE957B70 /* TokfenceDesktopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokfenceDesktopApp.swift; sourceTree = "<group>"; };
 		6A5C6040938A177A50BC9138 /* TokfenceWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TokfenceWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7EF891328B65B82431F5FFE8 /* TokfenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokfenceModels.swift; sourceTree = "<group>"; };
@@ -81,6 +83,7 @@
 				247623557685C9568B7E8D89 /* TokfenceComponents.swift */,
 				48B6F85CD95CCB4A95C93246 /* TokfenceDesktop.entitlements */,
 				6706C388832EFE18FE957B70 /* TokfenceDesktopApp.swift */,
+				5028EC1E47D6F0AE81587094 /* TokfenceIcons.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -218,6 +221,7 @@
 				AB52EB0C45291AEEE46542EB /* TokfenceComponents.swift in Sources */,
 				035100B8155C29A73F52D45E /* TokfenceDesktopApp.swift in Sources */,
 				808676BD569C0EBFB6ABA9A0 /* TokfenceFormatting.swift in Sources */,
+				E79C7ABE3857009F7824A6D2 /* TokfenceIcons.swift in Sources */,
 				CF2FD3B91E79EB40A4B1719B /* TokfenceModels.swift in Sources */,
 				8DA14560483C5FF52AA051CD /* TokfenceSharedStore.swift in Sources */,
 				1ED3193D9EC73E924F0147BA /* TokfenceSnapshot.swift in Sources */,

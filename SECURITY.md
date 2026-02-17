@@ -20,6 +20,50 @@ Tokfence improves security by:
 
 Tokfence does **not** provide process-level isolation by itself. Any local process with access to localhost can still send requests through the proxy unless additional OS-level controls are applied.
 
+## ImmuneFence Security Layer
+
+Tokfence adds a transport and request security layer ("ImmuneFence") to make local misuse harder and to fail fast on suspicious behavior.
+
+### Capability tokens
+
+- Each request is processed with a short-lived token in header `X-Tokfence-Capability`.
+- Tokens are Ed25519-signed and include:
+  - `client_id`
+  - `session_id`
+  - `scope` (`proxy` or `safe`)
+  - `risk_state`
+  - `expiry`
+  - `nonce`
+- If ImmuneFence is active, tokens are validated before proxying; invalid/expired/forged tokens are rejected with 403.
+- In non-strict local mode, the daemon can issue ephemeral internal tokens when missing a client token.
+
+### Risk state machine
+
+Tokfence tracks runtime risk with four states:
+
+- `GREEN`: normal operation.
+- `YELLOW`: increased scrutiny; request scope is reduced (shorter capability TTL and stricter checks).
+- `ORANGE`: safe-only request handling for read-like routes.
+- `RED`: request actions are blocked until the session is restarted.
+
+Risk increases from:
+- secret-pattern sightings in request body/input
+- disallowed endpoint usage
+- system-override commands in input
+- canary leak evidence in responses
+
+### Canary leak detection
+
+At startup, Tokfence generates a random canary marker in memory only.
+If the marker appears in a response stream/body, the request is flagged and risk escalates to `RED`.
+
+### Dual transport mode
+
+- Daemon advertises both:
+  - Unix socket (when `daemon.socket_path` is configured)
+  - TCP fallback (legacy and container compatibility)
+- Default socket path is `~/.tokfence/tokfence.sock` and is created with parent permissions `0700`, socket perms `0660`, then removed on shutdown.
+
 ## OpenClaw Integration Security Properties
 
 When `tokfence launch` is used to run OpenClaw:

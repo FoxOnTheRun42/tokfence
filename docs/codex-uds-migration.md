@@ -1,7 +1,19 @@
-# Task: Migrate Tokfence daemon from TCP localhost to Unix Domain Socket
+# UDS Transport + ImmuneFence Status
+
+> This document records completed implementation and current behavior.
+
+## Current status
+
+Implemented:
+- dual-listener daemon transport (UDS + TCP fallback)
+- socket defaults and permissions (`~/.tokfence/tokfence.sock`, `0660`, cleanup on shutdown)
+- UDS/TCP probing support in CLI flow
+- ImmuneFence pipeline: capabilities, risk machine, sensors, and canary escalation
 
 ## Context
-Tokfence is a local-first AI API gateway that proxies requests to LLM providers (OpenAI, Anthropic, etc.) and injects API keys from an encrypted vault. The daemon currently listens on `127.0.0.1:9471` (TCP). This is a security weakness: any local process can connect and use the proxy to make API calls with the user's keys. We need to migrate to a Unix Domain Socket (UDS) with filesystem permissions (`0660`) so only the owning user can connect.
+Tokfence is a local-first AI API gateway that proxies requests to LLM providers (OpenAI, Anthropic, etc.) and injects API keys from an encrypted vault. It runs on TCP for external-facing tool traffic (`127.0.0.1:9471`) and UDS for local control-plane clients.
+
+For the security model details, see [`security-model.md`](security-model.md).
 
 ## Repository layout
 ```

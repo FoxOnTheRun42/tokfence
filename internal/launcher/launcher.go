@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,13 +87,16 @@ func (l *Launcher) Preflight(ctx context.Context) []error {
 		mark("✓ Docker is running")
 	}
 
-	daemonAddr := net.JoinHostPort(l.TokCfg.Daemon.Host, fmt.Sprintf("%d", l.TokCfg.Daemon.Port))
-	conn, err := net.DialTimeout("tcp", daemonAddr, 2*time.Second)
+	reachable, network, _, err := probeDaemonReachability(l.TokCfg, 2*time.Second)
 	if err != nil {
-		fail(fmt.Errorf("tokfence daemon unreachable on %s", daemonAddr))
+		fail(fmt.Errorf("tokfence daemon unreachable on %s", err))
+	} else if !reachable {
+		fail(fmt.Errorf("tokfence daemon unreachable on %s", l.TokCfg.Daemon.Host))
 	} else {
-		_ = conn.Close()
-		mark(fmt.Sprintf("✓ Tokfence daemon is running on %s", daemonAddr))
+		if strings.TrimSpace(network) == "" {
+			network = "tcp"
+		}
+		mark(fmt.Sprintf("✓ Tokfence daemon is reachable over %s", network))
 	}
 
 	vaultProviders, err := l.Vault.List(ctx)
@@ -132,6 +136,26 @@ func (l *Launcher) Preflight(ctx context.Context) []error {
 	}
 
 	return failures
+}
+
+func probeDaemonReachability(cfg config.Config, timeout time.Duration) (bool, string, string, error) {
+	socketPath := strings.TrimSpace(cfg.Daemon.SocketPath)
+	if socketPath != "" {
+		conn, err := net.DialTimeout("unix", socketPath, timeout)
+		if err == nil {
+			_ = conn.Close()
+			addr := fmt.Sprintf("unix:%s", socketPath)
+			return true, "unix", addr, nil
+		}
+	}
+
+	addr := net.JoinHostPort(cfg.Daemon.Host, strconv.Itoa(cfg.Daemon.Port))
+	conn, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
+		return false, "tcp", "", err
+	}
+	_ = conn.Close()
+	return true, "tcp", "http://" + addr, nil
 }
 
 func (l *Launcher) Launch(ctx context.Context) (*LaunchResult, error) {
