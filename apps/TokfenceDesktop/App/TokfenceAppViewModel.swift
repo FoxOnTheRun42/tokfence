@@ -110,6 +110,10 @@ final class TokfenceAppViewModel: ObservableObject {
     @Published var logStatusFilter: TokfenceLogStatusFilter = .all
     @Published var logTimeRange: TokfenceTimeRange = .twentyFourHours
     @Published var logQuery = ""
+    @Published var launchResult = TokfenceLaunchResult()
+    @Published var launchBusy = false
+    @Published var launchLogsOutput = ""
+    @Published var launchConfigOutput = ""
 
     private var runner = TokfenceCommandRunner()
     private var refreshTask: Task<Void, Never>?
@@ -365,6 +369,67 @@ final class TokfenceAppViewModel: ObservableObject {
         await runAndRefresh { try runner.clearRateLimit(provider: provider) }
     }
 
+    func launchStart(
+        image: String? = nil,
+        name: String? = nil,
+        portText: String = "",
+        workspace: String? = nil,
+        noPull: Bool = false,
+        openDashboard: Bool = true
+    ) async {
+        await runAndRefreshLaunch {
+            let parsedPort = try parseLaunchPort(portText)
+            let result = try runner.launchStart(
+                image: image,
+                name: name,
+                port: parsedPort,
+                workspace: workspace,
+                noPull: noPull,
+                noOpen: !openDashboard
+            )
+            launchResult = result
+            launchLogsOutput = ""
+            launchConfigOutput = ""
+        }
+    }
+
+    func launchStatus() async {
+        await runAndRefreshLaunch {
+            let status = try runner.launchStatus()
+            launchResult = status
+        }
+    }
+
+    func launchConfig() async {
+        await runAndRefresh {
+            let output = try runner.launchConfig()
+            launchConfigOutput = output
+        }
+    }
+
+    func launchStop() async {
+        await runAndRefreshLaunch {
+            try runner.launchStop()
+            launchResult = TokfenceLaunchResult(status: "stopped")
+        }
+    }
+
+    func launchRestart() async {
+        await runAndRefreshLaunch {
+            let result = try runner.launchRestart()
+            launchResult = result
+            launchLogsOutput = ""
+            launchConfigOutput = ""
+        }
+    }
+
+    func launchLogs(follow: Bool = false) async {
+        await runAndRefresh {
+            let output = try runner.launchLogs(follow: follow)
+            launchLogsOutput = output
+        }
+    }
+
     func setBudget(provider: String, amountUSD: Double, period: String) async {
         await runAndRefresh { try runner.setBudget(provider: provider, amountUSD: amountUSD, period: period) }
     }
@@ -498,11 +563,39 @@ final class TokfenceAppViewModel: ObservableObject {
 
     private func runAndRefresh(_ operation: () throws -> Void) async {
         do {
+            clearError()
             try operation()
             await refreshAll()
         } catch {
             setError(error.localizedDescription)
         }
+    }
+
+    private func runAndRefreshLaunch(_ operation: () throws -> Void) async {
+        guard !launchBusy else {
+            return
+        }
+        launchBusy = true
+        clearError()
+        defer {
+            launchBusy = false
+        }
+        await runAndRefresh(operation)
+    }
+
+    private func parseLaunchPort(_ value: String) throws -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        guard let port = Int(trimmed), port > 0 && port < 65_535 else {
+            throw NSError(
+                domain: "TokfenceDesktop",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Gateway port must be a valid integer between 1 and 65534"]
+            )
+        }
+        return port
     }
 
     func dismissErrorToast() {

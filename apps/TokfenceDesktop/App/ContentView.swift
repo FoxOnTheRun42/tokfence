@@ -123,6 +123,8 @@ struct ContentView: View {
                 BudgetSectionView(viewModel: viewModel)
             case .providers:
                 ProvidersSectionView(viewModel: viewModel)
+            case .launch:
+                LaunchSectionView(viewModel: viewModel)
             case .settings:
                 SettingsSectionView(viewModel: viewModel)
             }
@@ -1214,6 +1216,378 @@ private struct ProvidersSectionView: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
+private struct LaunchSectionView: View {
+    @ObservedObject var viewModel: TokfenceAppViewModel
+
+    @Environment(\.openURL) private var openURL
+
+    @State private var image = "ghcr.io/openclaw/openclaw:latest"
+    @State private var containerName = "tokfence-openclaw"
+    @State private var gatewayPort = "18789"
+    @State private var workspace = "~/openclaw/workspace"
+    @State private var noPull = false
+    @State private var openDashboard = true
+    @State private var followLogs = false
+    @State private var showAdvanced = false
+    @State private var showLogs = false
+    @State private var selectedRequestID: String? = nil
+
+    private var daemonReady: Bool { viewModel.snapshot.running }
+    private var vaultReady: Bool { !viewModel.snapshot.vaultProviders.isEmpty }
+    private var dockerReady: Bool { !viewModel.lastError.localizedCaseInsensitiveContains("docker") }
+    private var prerequisitesMet: Bool { daemonReady && vaultReady && dockerReady }
+    private var isRunning: Bool {
+        let status = viewModel.launchResult.status.lowercased()
+        return !viewModel.launchResult.containerID.isEmpty || status.contains("running")
+    }
+    private var statusText: String {
+        if viewModel.launchBusy { return "Starting secure container..." }
+        if isRunning { return "OpenClaw is running securely" }
+        if !viewModel.launchResult.status.isEmpty { return viewModel.launchResult.status }
+        return "Not running"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                TokfenceSectionHeader(
+                    title: "Launch",
+                    subtitle: "Start OpenClaw in Docker with zero keys in the container"
+                )
+
+                heroArea
+
+                prerequisitesRow
+
+                securityCard
+
+                if isRunning { liveStatusCard }
+
+                advancedSettings
+
+                containerLogs
+            }
+            .padding(.bottom, 8)
+            .animation(TokfenceTheme.uiSpring, value: isRunning)
+        }
+        .onAppear {
+            if viewModel.launchResult.status.isEmpty {
+                Task { await viewModel.launchStatus() }
+            }
+        }
+    }
+
+    // MARK: - Hero
+
+    private var heroArea: some View {
+        TokfenceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: isRunning ? "lock.shield.fill" : "lock.shield")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(isRunning ? TokfenceTheme.healthy : TokfenceTheme.textSecondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(isRunning ? "OpenClaw is running securely" : "Launch OpenClaw Securely")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(TokfenceTheme.textPrimary)
+                        Text("Your API keys stay in the vault. The container never sees real credentials.")
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                    }
+                    Spacer(minLength: 0)
+
+                    if viewModel.launchBusy {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(TokfenceTheme.healthy)
+                    } else if isRunning {
+                        TokfenceLiveBadge(text: "Running", color: TokfenceTheme.healthy, isActive: true)
+                    }
+                }
+
+                if isRunning {
+                    HStack(spacing: 8) {
+                        if !viewModel.launchResult.gatewayURL.isEmpty {
+                            copyPill(viewModel.launchResult.gatewayURL, label: "Gateway URL copied")
+                                .onTapGesture {
+                                    copyToClipboard(viewModel.launchResult.gatewayURL)
+                                }
+                        }
+                        Spacer(minLength: 0)
+                    }
+
+                    HStack(spacing: 12) {
+                        Button {
+                            if let url = URL(string: viewModel.launchResult.dashboardURL), !viewModel.launchResult.dashboardURL.isEmpty {
+                                openURL(url)
+                            } else {
+                                openOpenClawDashboardFallback()
+                            }
+                        } label: {
+                            Label("Open Dashboard", systemImage: "rectangle.and.cursor.arrow")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(TokfenceTheme.info)
+                        .disabled(viewModel.launchBusy)
+
+                        Button {
+                            Task { await viewModel.launchStop() }
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(TokfenceTheme.danger)
+                        .disabled(viewModel.launchBusy)
+                    }
+                } else if viewModel.launchBusy {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                        Text("Starting secure container...")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(TokfenceTheme.textPrimary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Button {
+                        Task {
+                            await startLaunch()
+                        }
+                    } label: {
+                        Label("Launch OpenClaw", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TokfenceTheme.healthy)
+                    .frame(minHeight: 44)
+                    .disabled(!prerequisitesMet)
+                    .opacity(prerequisitesMet ? 1 : 0.55)
+
+                    if !prerequisitesMet {
+                        Text(prerequisiteMessage)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                    }
+                }
+            }
+            .animation(TokfenceTheme.uiSpring, value: isRunning)
+        }
+    }
+
+    // MARK: - Prerequisites
+
+    private var prerequisitesRow: some View {
+        TokfenceCard {
+            HStack(spacing: 16) {
+                prereqItem(title: "Daemon", ok: daemonReady) {
+                    Task { await viewModel.refreshAll() }
+                }
+                prereqItem(title: "Vault", ok: vaultReady, hint: "Add key") {
+                    withAnimation(TokfenceTheme.uiSpring) {
+                        viewModel.selectedSection = .vault
+                    }
+                }
+                prereqItem(title: "Docker", ok: dockerReady, hint: dockerReady ? nil : "Check Docker Desktop")
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func prereqItem(title: String, ok: Bool, hint: String? = nil, action: (() -> Void)? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TokfenceStatusDot(color: ok ? TokfenceTheme.healthy : TokfenceTheme.danger, label: title)
+            if !ok, let hint {
+                Button(hint) { action?() }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, weight: .medium))
+            }
+        }
+    }
+
+    private var prerequisiteMessage: String {
+        if !daemonReady { return "Daemon offline. Start it from the sidebar dot." }
+        if !vaultReady { return "Add at least one API key in the Vault tab." }
+        return "Docker not reachable. Open Docker Desktop and retry."
+    }
+
+    // MARK: - Security context
+
+    private var securityCard: some View {
+        TokfenceCard {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.accentPrimary)
+                    .frame(width: 28, height: 28)
+                    .padding(6)
+                    .background(
+                        RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous)
+                            .fill(TokfenceTheme.bgTertiary)
+                    )
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("OpenClaw normally stores API keys in plaintext JSON. CVE-2026-25253 exfiltrated them from 17,500 instances. Tokfence eliminates this: keys live in an encrypted vault, injected at request time.")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Live status
+
+    private var liveStatusCard: some View {
+        TokfenceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Live status")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(TokfenceTheme.textPrimary)
+                    Spacer()
+                    TokfenceLiveBadge(text: statusText, color: TokfenceTheme.healthy, isActive: isRunning)
+                }
+
+                VStack(spacing: 8) {
+                    TokfenceSectionRow(title: "Container", value: viewModel.launchResult.containerID.isEmpty ? "(not available)" : viewModel.launchResult.containerID)
+                    if !viewModel.launchResult.primaryModel.isEmpty {
+                        TokfenceSectionRow(title: "Primary model", value: viewModel.launchResult.primaryModel)
+                    }
+                    TokfenceSectionRow(title: "Gateway", value: viewModel.launchResult.gatewayURL.isEmpty ? "(pending)" : viewModel.launchResult.gatewayURL)
+                }
+
+                if !viewModel.launchResult.providers.isEmpty {
+                    HStack(spacing: 8) {
+                        Text("Providers")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                        ForEach(viewModel.launchResult.providers, id: \.self) { provider in
+                            TokfenceProviderBadge(provider: provider, active: true)
+                        }
+                    }
+                }
+
+                if viewModel.logs.isEmpty {
+                    Text("No proxy requests yet for this session.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                } else {
+                    RequestListPanel(records: Array(viewModel.logs.prefix(3)), selectedRequestID: $selectedRequestID, compact: true)
+                }
+            }
+        }
+    }
+
+    // MARK: - Advanced settings
+
+    private var advancedSettings: some View {
+        TokfenceCard {
+            DisclosureGroup(isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextField("Docker image", text: $image)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Container name", text: $containerName)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Gateway port", text: $gatewayPort)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Workspace path", text: $workspace)
+                        .textFieldStyle(.roundedBorder)
+
+                    Toggle("Skip image pull", isOn: $noPull)
+                        .toggleStyle(.switch)
+                    Toggle("Open dashboard after start", isOn: $openDashboard)
+                        .toggleStyle(.switch)
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("Advanced")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textPrimary)
+            }
+        }
+    }
+
+    // MARK: - Logs
+
+    private var containerLogs: some View {
+        TokfenceCard {
+            DisclosureGroup(isExpanded: $showLogs) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Button("Refresh") {
+                            Task { await viewModel.launchLogs(follow: followLogs) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.launchBusy)
+
+                        Toggle("Follow", isOn: $followLogs)
+                            .toggleStyle(.checkbox)
+                        Spacer()
+                    }
+
+                    ScrollView {
+                        Text(viewModel.launchLogsOutput.isEmpty ? "No logs yet." : viewModel.launchLogsOutput)
+                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .foregroundStyle(TokfenceTheme.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 200)
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("Container Logs")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textPrimary)
+            }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func startLaunch() async {
+        await viewModel.launchStart(
+            image: image,
+            name: containerName,
+            portText: gatewayPort,
+            workspace: workspace,
+            noPull: noPull,
+            openDashboard: openDashboard
+        )
+        if openDashboard, let dashboard = URL(string: viewModel.launchResult.dashboardURL), !viewModel.launchResult.dashboardURL.isEmpty {
+            openURL(dashboard)
+        }
+    }
+
+    private func copyPill(_ text: String, label: String? = nil) -> some View {
+        Text(text.isEmpty ? "(pending)" : text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(TokfenceTheme.textPrimary)
+            .background(
+                RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
+                    .fill(TokfenceTheme.bgTertiary)
+            )
+            .accessibilityLabel(label ?? text)
+    }
+
+    private func copyToClipboard(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(trimmed, forType: .string)
+    }
+
+    private func openOpenClawDashboardFallback() {
+        if let url = URL(string: viewModel.launchResult.gatewayURL) {
+            openURL(url)
         }
     }
 }

@@ -13,6 +13,7 @@ struct TokfenceStreamingProbeResult {
 struct TokfenceCommandRunner {
     private let binaryPathKey = "tokfence.desktop.binaryPath"
     private let commandTimeout: TimeInterval = 8.0
+    private let launchCommandTimeout: TimeInterval = 90.0
     private let retryAttempts = 2
 
     var configuredBinaryPath: String {
@@ -87,6 +88,65 @@ struct TokfenceCommandRunner {
             args += ["--provider", provider]
         }
         return try runJSON(args, decode: [String: String].self)
+    }
+
+    func launchStart(
+        image: String? = nil,
+        name: String? = nil,
+        port: Int? = nil,
+        workspace: String? = nil,
+        noPull: Bool = false,
+        noOpen: Bool = true,
+        json: Bool = true
+    ) throws -> TokfenceLaunchResult {
+        var args = ["launch"]
+        if json {
+            args.append("--json")
+        }
+        if let image, !image.isEmpty {
+            args += ["--image", image]
+        }
+        if let name, !name.isEmpty {
+            args += ["--name", name]
+        }
+        if let port {
+            args += ["--port", "\(port)"]
+        }
+        if let workspace, !workspace.isEmpty {
+            args += ["--workspace", workspace]
+        }
+        if noPull {
+            args.append("--no-pull")
+        }
+        if noOpen {
+            args.append("--no-open")
+        }
+        return try runJSON(args, decode: TokfenceLaunchResult.self, timeout: launchCommandTimeout)
+    }
+
+    func launchStatus() throws -> TokfenceLaunchResult {
+        try runJSON(["launch", "status", "--json"], decode: TokfenceLaunchResult.self)
+    }
+
+    func launchConfig() throws -> String {
+        try run(arguments: ["launch", "config"])
+    }
+
+    func launchStop() throws {
+        _ = try run(arguments: ["launch", "stop"])
+    }
+
+    func launchRestart() throws -> TokfenceLaunchResult {
+        return try runJSON(["launch", "restart", "--json"], decode: TokfenceLaunchResult.self, timeout: launchCommandTimeout)
+    }
+
+    func launchLogs(follow: Bool = false) throws -> String {
+        var args = ["launch", "logs"]
+        if follow {
+            args += ["-f"]
+        }
+        let timeout = follow ? commandTimeout : launchCommandTimeout
+        return try run(arguments: args, timeout: timeout)
     }
 
     func startDaemon() throws {
@@ -247,10 +307,14 @@ struct TokfenceCommandRunner {
     }
 
     private func runJSON<T: Decodable>(_ arguments: [String], decode type: T.Type) throws -> T {
+        try runJSON(arguments, decode: type, timeout: commandTimeout)
+    }
+
+    private func runJSON<T: Decodable>(_ arguments: [String], decode type: T.Type, timeout: TimeInterval) throws -> T {
         var lastError: Error?
         for attempt in 0..<retryAttempts {
             do {
-                let output = try run(arguments: arguments)
+                let output = try run(arguments: arguments, timeout: timeout)
                 let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     throw NSError(
@@ -303,7 +367,7 @@ struct TokfenceCommandRunner {
         )
     }
 
-    private func run(arguments: [String], stdin: String? = nil) throws -> String {
+    private func run(arguments: [String], stdin: String? = nil, timeout: TimeInterval? = nil) throws -> String {
         let process = Process()
         guard let executablePath = resolveExecutablePathForRun() else {
             throw NSError(domain: "TokfenceCommandRunner", code: 2, userInfo: [
@@ -336,6 +400,7 @@ struct TokfenceCommandRunner {
             ])
         }
 
+        let commandTimeout = timeout ?? self.commandTimeout
         let timeout = DispatchTime.now() + commandTimeout
         if done.wait(timeout: timeout) == .timedOut {
             process.terminate()

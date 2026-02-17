@@ -6,6 +6,7 @@ enum TokfenceSection: String, CaseIterable, Identifiable {
     case logs
     case budget
     case providers
+    case launch
     case settings
 
     var id: String { rawValue }
@@ -22,6 +23,8 @@ enum TokfenceSection: String, CaseIterable, Identifiable {
             return "Budget"
         case .providers:
             return "Providers"
+        case .launch:
+            return "Launch"
         case .settings:
             return "Settings"
         }
@@ -39,6 +42,8 @@ enum TokfenceSection: String, CaseIterable, Identifiable {
             return "dollarsign.circle"
         case .providers:
             return "server.rack"
+        case .launch:
+            return "play.circle.fill"
         case .settings:
             return "gearshape"
         }
@@ -220,4 +225,92 @@ struct TokfenceVaultProvidersResponse: Codable, Hashable {
 
 struct TokfenceCommandResult: Codable, Hashable {
     let status: String?
+}
+
+struct TokfenceLaunchResult: Codable, Hashable {
+    let containerID: String
+    let gatewayURL: String
+    let gatewayToken: String
+    let dashboardURL: String
+    let providers: [String]
+    let primaryModel: String
+    let configPath: String
+    let status: String
+    let logsPreview: String?
+
+    var isRunning: Bool {
+        status.lowercased() == "running"
+    }
+
+    init(
+        containerID: String = "",
+        gatewayURL: String = "",
+        gatewayToken: String = "",
+        dashboardURL: String = "",
+        providers: [String] = [],
+        primaryModel: String = "",
+        configPath: String = "",
+        status: String = "",
+        logsPreview: String? = nil
+    ) {
+        self.containerID = containerID
+        self.gatewayURL = gatewayURL
+        self.gatewayToken = gatewayToken
+        self.dashboardURL = dashboardURL
+        self.providers = providers
+        self.primaryModel = primaryModel
+        self.configPath = configPath
+        self.status = status
+        self.logsPreview = logsPreview
+    }
+
+    init(from decoder: Decoder) throws {
+        if let c = try? decoder.container(keyedBy: SnakeKeys.self), c.contains(.containerID) {
+            containerID = (try? c.decode(String.self, forKey: .containerID)) ?? ""
+            gatewayURL = (try? c.decode(String.self, forKey: .gatewayURL)) ?? ""
+            gatewayToken = (try? c.decode(String.self, forKey: .gatewayToken)) ?? ""
+            dashboardURL = (try? c.decode(String.self, forKey: .dashboardURL)) ?? ""
+            providers = (try? c.decode([String].self, forKey: .providers)) ?? []
+            primaryModel = (try? c.decode(String.self, forKey: .primaryModel)) ?? ""
+            configPath = (try? c.decode(String.self, forKey: .configPath)) ?? ""
+            status = (try? c.decode(String.self, forKey: .status)) ?? ""
+            logsPreview = try? c.decode(String.self, forKey: .logsPreview)
+            return
+        }
+
+        let c = try decoder.container(keyedBy: PascalKeys.self)
+        containerID = (try? c.decode(String.self, forKey: .containerID)) ?? ""
+        gatewayURL = (try? c.decode(String.self, forKey: .gatewayURL)) ?? ""
+        gatewayToken = (try? c.decode(String.self, forKey: .gatewayToken)) ?? ""
+        dashboardURL = (try? c.decode(String.self, forKey: .dashboardURL)) ?? ""
+        providers = (try? c.decode([String].self, forKey: .providers)) ?? []
+        primaryModel = (try? c.decode(String.self, forKey: .primaryModel)) ?? ""
+        configPath = (try? c.decode(String.self, forKey: .configPath)) ?? ""
+        status = (try? c.decode(String.self, forKey: .status)) ?? ""
+        logsPreview = try? c.decode(String.self, forKey: .logsPreview)
+    }
+
+    enum PascalKeys: String, CodingKey {
+        case containerID = "ContainerID"
+        case gatewayURL = "GatewayURL"
+        case gatewayToken = "GatewayToken"
+        case dashboardURL = "DashboardURL"
+        case providers = "Providers"
+        case primaryModel = "PrimaryModel"
+        case configPath = "ConfigPath"
+        case status = "Status"
+        case logsPreview = "LogsPreview"
+    }
+
+    enum SnakeKeys: String, CodingKey {
+        case containerID = "container_id"
+        case gatewayURL = "gateway_url"
+        case gatewayToken = "gateway_token"
+        case dashboardURL = "dashboard_url"
+        case providers
+        case primaryModel = "primary_model"
+        case configPath = "config_path"
+        case status
+        case logsPreview = "logs_preview"
+    }
 }
