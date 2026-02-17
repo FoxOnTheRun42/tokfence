@@ -67,6 +67,31 @@ enum TokfenceAgentStatus: String, Hashable {
     case placeholder
 }
 
+enum TokfenceSetupStepID: String, CaseIterable, Identifiable {
+    case docker
+    case daemon
+    case vault
+    case container
+
+    var id: String { rawValue }
+}
+
+enum TokfenceSetupStepStatus: Equatable {
+    case pending
+    case inProgress
+    case complete
+    case failed(message: String)
+}
+
+struct TokfenceSetupStepState: Identifiable, Equatable {
+    let id: TokfenceSetupStepID
+    let title: String
+    let reason: String
+    let actionTitle: String?
+    let status: TokfenceSetupStepStatus
+    let isActionEnabled: Bool
+}
+
 struct TokfenceAgentCardModel: Identifiable, Hashable {
     let id: String
     let name: String
@@ -75,6 +100,7 @@ struct TokfenceAgentCardModel: Identifiable, Hashable {
     let uptimeText: String
     let gatewayURL: String
     let dashboardURL: String
+    let gatewayToken: String
     let providers: [String]
     let recentActivity: [TokfenceLogRecord]
     let lastError: String
