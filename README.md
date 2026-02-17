@@ -1,8 +1,31 @@
 # Tokfence
 
-One place for all your AI keys with full control over every token your agents burn.
+**Your AI agent's API keys never leave the vault.**
 
-Tokfence is a local-first daemon and CLI that sits between AI tools and upstream model APIs. It injects credentials, logs request metadata, estimates cost, enforces budgets, supports provider kill-switches, and exposes shell-ready base URL exports.
+Tokfence sits between your AI agents and provider APIs. Keys stay in an
+encrypted vault (macOS Keychain / Argon2). Every request is logged, budgeted,
+and rate-limited. One command to run OpenClaw with zero key exposure.
+
+```bash
+tokfence vault add openai sk-...
+tokfence launch
+# → OpenClaw opens. Keys stay in the vault. Done.
+```
+
+## Why
+
+OpenClaw stores API keys in plaintext JSON. CVE-2026-25253 exfiltrated
+them via 1-click RCE — 17,500 instances were exposed. Tokfence eliminates
+this attack surface: the container never sees your real keys.
+
+## What You Get
+
+- **Encrypted vault** — Keys in macOS Keychain or Argon2-encrypted file, never in dotfiles.
+- **Transparent proxy** — Every API call logged with model, tokens, cost, latency.
+- **Budget caps** — `tokfence budget set openai daily 10.00` and it stops.
+- **Kill switch** — `tokfence kill` cuts all API access instantly.
+- **Leak detection** — `tokfence watch` monitors for exposed credentials.
+- **One-click OpenClaw** — `tokfence launch` starts a secure OpenClaw in Docker.
 
 ![Tokfence Dashboard](docs/launch/screenshot_dashboard.png)
 
@@ -17,19 +40,6 @@ Launch assets + E2E capture: `docs/launch/`
 | Key Leak Detector | Control Plane |
 | --- | --- |
 | ![Tokfence Key Leak Detector](docs/launch/infographic_leak_detection.png) | ![Tokfence Control Plane](docs/launch/infographic_control_plane.png) |
-
-## Secure OpenClaw in 60 Seconds
-
-```bash
-tokfence vault add anthropic sk-ant-...
-tokfence start -d
-tokfence launch
-```
-
-OpenClaw starts in Docker. Your API keys stay in Tokfence's encrypted vault and are never exposed to the container.
-Budget caps, kill switch, and leak detection are enabled.
-
-→ [Full OpenClaw guide](docs/openclaw.md)
 
 ## Features
 
