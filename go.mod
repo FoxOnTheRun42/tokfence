@@ -1,4 +1,4 @@
-module github.com/macfox/tokfence
+module github.com/FoxOnTheRun42/tokfence
 
 go 1.25.6
 

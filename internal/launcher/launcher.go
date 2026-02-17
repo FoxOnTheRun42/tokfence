@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/macfox/tokfence/internal/config"
-	"github.com/macfox/tokfence/internal/vault"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/vault"
 )
 
 type LaunchConfig struct {

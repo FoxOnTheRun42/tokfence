@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/macfox/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
 )
 
 var ErrKeyNotFound = errors.New("key not found")

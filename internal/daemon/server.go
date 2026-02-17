@@ -22,13 +22,13 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
-	"github.com/macfox/tokfence/internal/budget"
-	"github.com/macfox/tokfence/internal/config"
-	"github.com/macfox/tokfence/internal/logger"
-	"github.com/macfox/tokfence/internal/process"
-	"github.com/macfox/tokfence/internal/proxy"
-	"github.com/macfox/tokfence/internal/security"
-	"github.com/macfox/tokfence/internal/vault"
+	"github.com/FoxOnTheRun42/tokfence/internal/budget"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/logger"
+	"github.com/FoxOnTheRun42/tokfence/internal/process"
+	"github.com/FoxOnTheRun42/tokfence/internal/proxy"
+	"github.com/FoxOnTheRun42/tokfence/internal/security"
+	"github.com/FoxOnTheRun42/tokfence/internal/vault"
 )
 
 const (

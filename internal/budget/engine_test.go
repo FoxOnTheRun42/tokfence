@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/macfox/tokfence/internal/logger"
+	"github.com/FoxOnTheRun42/tokfence/internal/logger"
 )
 
 func TestBudgetEnforcement(t *testing.T) {

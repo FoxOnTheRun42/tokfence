@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/macfox/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
 )
 
 const openclawVersion = "2026.2.14"

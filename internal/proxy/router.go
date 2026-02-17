@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/macfox/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
 )
 
 type Route struct {

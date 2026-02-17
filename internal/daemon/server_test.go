@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/macfox/tokfence/internal/budget"
-	"github.com/macfox/tokfence/internal/config"
-	"github.com/macfox/tokfence/internal/logger"
-	"github.com/macfox/tokfence/internal/vault"
+	"github.com/FoxOnTheRun42/tokfence/internal/budget"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/logger"
+	"github.com/FoxOnTheRun42/tokfence/internal/vault"
 )
 
 type testVault struct {

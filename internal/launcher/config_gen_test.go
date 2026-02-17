@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/macfox/tokfence/internal/config"
+	"github.com/FoxOnTheRun42/tokfence/internal/config"
 )
 
 func TestGenerateConfig_SingleProvider(t *testing.T) {

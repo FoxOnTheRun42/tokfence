@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/macfox/tokfence/internal/security"
+	"github.com/FoxOnTheRun42/tokfence/internal/security"
 )
 
 const (
