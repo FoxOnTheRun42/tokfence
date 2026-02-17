@@ -3,6 +3,7 @@ package launcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -159,6 +160,10 @@ func runDockerCommand(ctx context.Context, args ...string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	if err := cmd.Run(); err != nil {
+		if isDockerNotFoundError(err, out.String()) {
+			return out.String(), err
+		}
+		err = normalizeDockerCommandError(err, out.String())
 		return out.String(), err
 	}
 	return out.String(), nil
@@ -211,12 +216,46 @@ func isDockerNotFoundError(err error, output string) bool {
 	return false
 }
 
+func normalizeDockerCommandError(err error, output string) error {
+	if err == nil {
+		return nil
+	}
+	outputLower := strings.ToLower(strings.TrimSpace(output))
+	errLower := strings.ToLower(strings.TrimSpace(err.Error()))
+	if outputLower == "" && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s", dockerErrDaemonDown)
+	}
+	if strings.Contains(errLower, "context deadline exceeded") ||
+		strings.Contains(errLower, "signal: killed") ||
+		strings.Contains(errLower, "i/o timeout") {
+		return fmt.Errorf("%s", dockerErrDaemonDown)
+	}
+	if strings.Contains(outputLower, "cannot connect to the docker daemon") ||
+		strings.Contains(outputLower, "is the docker daemon running") ||
+		strings.Contains(outputLower, "docker daemon") {
+		return fmt.Errorf("%s", dockerErrDaemonDown)
+	}
+	if strings.Contains(errLower, "docker binary not found") ||
+		strings.Contains(errLower, "executable file not found") ||
+		strings.Contains(errLower, "no such file or directory") ||
+		strings.Contains(outputLower, "command not found") {
+		return fmt.Errorf("%s", dockerErrNotInstalled)
+	}
+	return err
+}
+
 func dockerAvailabilityError(err error, output string) error {
 	if err == nil {
 		return nil
 	}
 	outputLower := strings.ToLower(output)
 	errLower := strings.ToLower(err.Error())
+	if strings.Contains(errLower, strings.ToLower(dockerErrNotInstalled)) {
+		return fmt.Errorf("%s", dockerErrNotInstalled)
+	}
+	if strings.Contains(errLower, strings.ToLower(dockerErrDaemonDown)) {
+		return fmt.Errorf("%s", dockerErrDaemonDown)
+	}
 	if strings.Contains(errLower, "executable file not found") ||
 		strings.Contains(errLower, "docker binary not found") ||
 		strings.Contains(errLower, "no such file or directory") ||

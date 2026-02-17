@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
 )
@@ -22,5 +24,35 @@ func TestIsPortAvailable(t *testing.T) {
 	ln.Close()
 	if !IsPortAvailable(inUsePort) {
 		t.Fatalf("free port %d reported as unavailable", inUsePort)
+	}
+}
+
+func TestNormalizeDockerCommandError_DaemonDownByDeadline(t *testing.T) {
+	got := normalizeDockerCommandError(context.DeadlineExceeded, "")
+	if got == nil {
+		t.Fatal("expected daemon-down error, got nil")
+	}
+	if got.Error() != dockerErrDaemonDown {
+		t.Fatalf("unexpected error: %v", got)
+	}
+}
+
+func TestNormalizeDockerCommandError_DaemonDownByKilledSignal(t *testing.T) {
+	got := normalizeDockerCommandError(errors.New("signal: killed"), "")
+	if got == nil {
+		t.Fatal("expected daemon-down error, got nil")
+	}
+	if got.Error() != dockerErrDaemonDown {
+		t.Fatalf("unexpected error: %v", got)
+	}
+}
+
+func TestNormalizeDockerCommandError_NotInstalled(t *testing.T) {
+	got := normalizeDockerCommandError(errors.New("docker binary not found"), "")
+	if got == nil {
+		t.Fatal("expected not-installed error, got nil")
+	}
+	if got.Error() != dockerErrNotInstalled {
+		t.Fatalf("unexpected error: %v", got)
 	}
 }
