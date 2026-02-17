@@ -18,6 +18,19 @@ Launch assets + E2E capture: `docs/launch/`
 | --- | --- |
 | ![Tokfence Key Leak Detector](docs/launch/infographic_leak_detection.png) | ![Tokfence Control Plane](docs/launch/infographic_control_plane.png) |
 
+## Secure OpenClaw in 60 Seconds
+
+```bash
+tokfence vault add anthropic sk-ant-...
+tokfence start -d
+tokfence launch
+```
+
+OpenClaw starts in Docker. Your API keys stay in Tokfence's encrypted vault and are never exposed to the container.
+Budget caps, kill switch, and leak detection are enabled.
+
+→ [Full OpenClaw guide](docs/openclaw.md)
+
 ## Features
 
 - Local proxy on `127.0.0.1:9471` with provider path routing.

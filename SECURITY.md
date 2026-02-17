@@ -20,6 +20,22 @@ Tokfence improves security by:
 
 Tokfence does **not** provide process-level isolation by itself. Any local process with access to localhost can still send requests through the proxy unless additional OS-level controls are applied.
 
+## OpenClaw Integration Security Properties
+
+When `tokfence launch` is used to run OpenClaw:
+
+1. **No API keys in the container.** OpenClaw's config contains `"apiKey": "tokfence-managed"` (a dummy value). Real keys never leave Tokfence's vault.
+2. **CVE-2026-25253 impact reduced to zero.** This CVE exfiltrated API keys from OpenClaw's `auth-profiles.json`. With Tokfence, that file either doesn't exist or contains only the dummy value.
+3. **All API traffic is logged.** Every request from the container passes through Tokfence's proxy. Visible in `tokfence log`.
+4. **Budget caps apply.** `tokfence budget set anthropic daily 10.00` limits container spend. Exceeded budgets return HTTP 429.
+5. **Kill switch works instantly.** `tokfence kill` revokes all providers. The container cannot make API calls until restored.
+6. **Key leak detection.** `tokfence watch` monitors for keys appearing where they shouldn't.
+
+What Tokfence does NOT protect against:
+- A compromised process on the host can still make requests through the tokfence proxy.
+- Tokfence prevents key exfiltration (stealing the key), but does not prevent key misuse.
+- Budget caps and rate limits are the containment layer for local misuse risk.
+
 ## Cryptography
 
 Encrypted file vault backend (`~/.tokfence/vault.enc`):

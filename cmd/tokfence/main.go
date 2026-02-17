@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/macfox/tokfence/internal/budget"
 	"github.com/macfox/tokfence/internal/config"
 	"github.com/macfox/tokfence/internal/daemon"
+	"github.com/macfox/tokfence/internal/launcher"
 	"github.com/macfox/tokfence/internal/logger"
 	"github.com/macfox/tokfence/internal/vault"
 )
@@ -62,6 +64,7 @@ func main() {
 	rootCmd.AddCommand(newProviderCommand())
 	rootCmd.AddCommand(newSetupCommand())
 	rootCmd.AddCommand(newWidgetCommand())
+	rootCmd.AddCommand(buildLaunchCmd(configPath))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
@@ -1423,6 +1426,249 @@ func newSetupCommand() *cobra.Command {
 
 	setupCmd.AddCommand(openclawCmd)
 	return setupCmd
+}
+
+func buildLaunchCmd(configPath string) *cobra.Command {
+	launchCmd := &cobra.Command{
+		Use:   "launch",
+		Short: "Launch OpenClaw in Docker through tokfence",
+	}
+
+	defaultCfg := launcher.DefaultLaunchConfig()
+	var noPull bool
+	var noOpen bool
+
+	launchCmd.PersistentFlags().StringVar(&defaultCfg.Image, "image", defaultCfg.Image, "Docker image")
+	launchCmd.PersistentFlags().StringVar(&defaultCfg.ContainerName, "name", defaultCfg.ContainerName, "container name")
+	launchCmd.PersistentFlags().IntVar(&defaultCfg.GatewayPort, "port", defaultCfg.GatewayPort, "host gateway port for OpenClaw web UI")
+	launchCmd.PersistentFlags().StringVar(&defaultCfg.WorkspaceDir, "workspace", defaultCfg.WorkspaceDir, "OpenClaw workspace directory")
+	launchCmd.PersistentFlags().BoolVar(&noPull, "no-pull", false, "skip image pull")
+	launchCmd.PersistentFlags().BoolVar(&noOpen, "no-open", false, "don't open dashboard in browser")
+
+	launchCmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		l, err := buildLauncherFromCommand(configPath, cmd, noPull, noOpen)
+		if err != nil {
+			return err
+		}
+		l.Stdout = os.Stderr
+		return runLaunchStart(ctx, l)
+	}
+
+	launchCmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Stop and remove OpenClaw container",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			l, err := buildLauncherFromCommand(configPath, cmd, noPull, noOpen)
+			if err != nil {
+				return err
+			}
+			l.Stdout = os.Stderr
+			if err := l.Stop(ctx); err != nil {
+				return err
+			}
+			if outputJSON {
+				return printJSON(map[string]any{"status": "stopped", "container": l.Config.ContainerName})
+			}
+			fmt.Println("✓ OpenClaw stopped and removed.")
+			return nil
+		},
+	})
+
+	launchCmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show OpenClaw launch status",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			l, err := buildLauncherFromCommand(configPath, cmd, noPull, noOpen)
+			if err != nil {
+				return err
+			}
+			result, err := l.Status(ctx)
+			if err != nil {
+				return err
+			}
+			if outputJSON {
+				return printJSON(result)
+			}
+			if result.Status == "" {
+				result.Status = "stopped"
+			}
+			fmt.Printf("OpenClaw status: %s\n", result.Status)
+			fmt.Printf("Container: %s\n", l.Config.ContainerName)
+			fmt.Printf("Config: %s\n", result.ConfigPath)
+			if result.Status != "running" {
+				return nil
+			}
+			fmt.Printf("Gateway: %s\n", result.GatewayURL)
+			if result.DashboardURL != "" {
+				fmt.Printf("Dashboard: %s\n", result.DashboardURL)
+			}
+			fmt.Printf("Providers: %v\n", result.Providers)
+			fmt.Printf("Primary model: %s\n", result.PrimaryModel)
+			return nil
+		},
+	})
+
+	logsCmd := &cobra.Command{
+		Use:   "logs",
+		Short: "Show OpenClaw container logs",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			follow, err := cmd.Flags().GetBool("follow")
+			if err != nil {
+				return err
+			}
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			l, err := buildLauncherFromCommand(configPath, cmd, noPull, noOpen)
+			if err != nil {
+				return err
+			}
+			l.Stdout = os.Stderr
+			return l.Logs(ctx, follow)
+		},
+	}
+	logsCmd.Flags().BoolP("follow", "f", false, "follow logs")
+	launchCmd.AddCommand(logsCmd)
+
+	launchCmd.AddCommand(&cobra.Command{
+		Use:   "restart",
+		Short: "Restart OpenClaw container with updated config",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			l, err := buildLauncherFromCommand(configPath, cmd, noPull, noOpen)
+			if err != nil {
+				return err
+			}
+			l.Stdout = os.Stderr
+			_ = l.Stop(ctx)
+			result, err := l.Launch(ctx)
+			if err != nil {
+				return err
+			}
+			if outputJSON {
+				return printJSON(result)
+			}
+			fmt.Printf("✓ OpenClaw restarted (%s)\n", result.Status)
+			if result.DashboardURL != "" {
+				fmt.Printf("Dashboard: %s\n", result.DashboardURL)
+			}
+			return nil
+		},
+	})
+
+	launchCmd.AddCommand(&cobra.Command{
+		Use:   "config",
+		Short: "Print OpenClaw configuration JSON",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			v, err := vault.NewDefault(vault.Options{})
+			if err != nil {
+				return err
+			}
+			providers, err := v.List(context.Background())
+			if err != nil {
+				return err
+			}
+			jsonBytes, _, err := launcher.GenerateOpenClawConfig(providers, cfg)
+			if err != nil {
+				return err
+			}
+			_, err = os.Stdout.Write(jsonBytes)
+			if err != nil {
+				return err
+			}
+			_, err = os.Stdout.WriteString("\n")
+			return err
+		},
+	})
+
+	return launchCmd
+}
+
+func runLaunchStart(ctx context.Context, l *launcher.Launcher) error {
+	result, err := l.Launch(ctx)
+	if err != nil {
+		return err
+	}
+	if outputJSON {
+		return printJSON(result)
+	}
+	if !l.Config.OpenBrowser || result.DashboardURL == "" {
+		return nil
+	}
+	return openBrowserURL(result.DashboardURL)
+}
+
+func openBrowserURL(target string) error {
+	var command string
+	switch runtime.GOOS {
+	case "darwin":
+		command = "open"
+	case "linux":
+		command = "xdg-open"
+	default:
+		return nil
+	}
+	cmd := exec.Command(command, target)
+	return cmd.Start()
+}
+
+func buildLauncher(configPath string, cfg launcher.LaunchConfig) (*launcher.Launcher, error) {
+	tokCfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, err
+	}
+	v, err := vault.NewDefault(vault.Options{})
+	if err != nil {
+		return nil, err
+	}
+	return &launcher.Launcher{
+		Config: cfg,
+		TokCfg: tokCfg,
+		Vault:  v,
+	}, nil
+}
+
+func buildLauncherFromCommand(configPath string, cmd *cobra.Command, noPull, noOpen bool) (*launcher.Launcher, error) {
+	cfg, err := launchConfigFromCommand(cmd, launcher.DefaultLaunchConfig())
+	if err != nil {
+		return nil, err
+	}
+	cfg.Pull = !noPull
+	cfg.OpenBrowser = !noOpen
+	return buildLauncher(configPath, cfg)
+}
+
+func launchConfigFromCommand(cmd *cobra.Command, defaults launcher.LaunchConfig) (launcher.LaunchConfig, error) {
+	cfg := defaults
+
+	image, err := cmd.Flags().GetString("image")
+	if err == nil {
+		cfg.Image = image
+	}
+	name, err := cmd.Flags().GetString("name")
+	if err == nil {
+		cfg.ContainerName = name
+	}
+	port, err := cmd.Flags().GetInt("port")
+	if err == nil {
+		cfg.GatewayPort = port
+	}
+	workspace, err := cmd.Flags().GetString("workspace")
+	if err == nil {
+		cfg.WorkspaceDir = workspace
+	}
+
+	return cfg, nil
 }
 
 func newWidgetCommand() *cobra.Command {

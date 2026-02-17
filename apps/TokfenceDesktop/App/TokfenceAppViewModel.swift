@@ -123,6 +123,7 @@ final class TokfenceAppViewModel: ObservableObject {
     private let budgetWarningThreshold = 0.8
     private let budgetAlertLevelDefaultsKey = "TokfenceDesktop.lastBudgetAlertLevel"
     private let budgetAlertDayDefaultsKey = "TokfenceDesktop.lastBudgetAlertDay"
+    private let preferredModelDefaultsPrefix = "TokfenceDesktop.preferredModel."
 
     init() {
         binaryPath = runner.configuredBinaryPath
@@ -372,7 +373,7 @@ final class TokfenceAppViewModel: ObservableObject {
         await runAndRefresh { try runner.clearBudget(provider: provider) }
     }
 
-    func addVaultKey(provider: String, key: String, endpoint: String?) async {
+    func addVaultKey(provider: String, key: String, endpoint: String?, preferredModel: String?) async {
         await runAndRefresh {
             let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !normalizedProvider.isEmpty else {
@@ -388,7 +389,20 @@ final class TokfenceAppViewModel: ObservableObject {
                 try runner.setProviderEndpoint(provider: normalizedProvider, endpoint: trimmedEndpoint)
             }
             try runner.addVaultKey(provider: normalizedProvider, key: key)
+
+            let trimmedModel = preferredModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmedModel.isEmpty {
+                UserDefaults.standard.set(trimmedModel, forKey: preferredModelDefaultsPrefix + normalizedProvider)
+            }
         }
+    }
+
+    func preferredModel(for provider: String) -> String? {
+        let normalizedProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalizedProvider.isEmpty else { return nil }
+        let stored = UserDefaults.standard.string(forKey: preferredModelDefaultsPrefix + normalizedProvider)
+        let trimmed = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     func rotateVaultKey(provider: String, key: String) async {

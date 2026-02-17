@@ -687,7 +687,8 @@ private struct VaultSectionView: View {
                         await viewModel.addVaultKey(
                             provider: submission.provider,
                             key: submission.key,
-                            endpoint: submission.endpoint
+                            endpoint: submission.endpoint,
+                            preferredModel: submission.model
                         )
                     } else {
                         await viewModel.rotateVaultKey(provider: state.provider, key: submission.key)
@@ -1362,6 +1363,7 @@ private struct VaultKeySubmission {
     let provider: String
     let key: String
     let endpoint: String?
+    let model: String?
 }
 
 private struct VaultKeyEditorState: Identifiable {
@@ -1377,29 +1379,107 @@ private struct VaultKeyEditorState: Identifiable {
 }
 
 private struct VaultKeyEditorSheet: View {
+    private struct PopularProviderPreset: Identifiable, Hashable {
+        let id: String
+        let company: String
+        let endpoint: String
+        let models: [String]
+    }
+
     let state: VaultKeyEditorState
     let knownUpstreams: [String: String]
     let onSubmit: (VaultKeySubmission) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var provider = ""
+    @State private var selectedProvider = "anthropic"
+    @State private var customProvider = ""
     @State private var endpoint = ""
+    @State private var model = ""
     @State private var key = ""
     @State private var endpointManuallyEdited = false
     @State private var suppressEndpointTracking = false
+    @State private var modelManuallyEdited = false
 
-    private static let smartDefaults: [String: String] = [
-        "anthropic": "https://api.anthropic.com",
-        "openai": "https://api.openai.com",
-        "google": "https://generativelanguage.googleapis.com",
-        "mistral": "https://api.mistral.ai",
-        "openrouter": "https://openrouter.ai/api",
-        "groq": "https://api.groq.com/openai",
-        "deepseek": "https://api.deepseek.com",
+    private static let customProviderOption = "__custom__"
+    private static let popularProviderPresets: [PopularProviderPreset] = [
+        PopularProviderPreset(
+            id: "anthropic",
+            company: "Anthropic",
+            endpoint: "https://api.anthropic.com",
+            models: ["claude-sonnet-4-5", "claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"]
+        ),
+        PopularProviderPreset(
+            id: "openai",
+            company: "OpenAI",
+            endpoint: "https://api.openai.com",
+            models: ["gpt-5.1", "gpt-4o", "gpt-4o-mini"]
+        ),
+        PopularProviderPreset(
+            id: "google",
+            company: "Google (Gemini)",
+            endpoint: "https://generativelanguage.googleapis.com",
+            models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+        ),
+        PopularProviderPreset(
+            id: "mistral",
+            company: "Mistral",
+            endpoint: "https://api.mistral.ai",
+            models: ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"]
+        ),
+        PopularProviderPreset(
+            id: "groq",
+            company: "Groq",
+            endpoint: "https://api.groq.com/openai",
+            models: ["llama-3.1-8b-instant", "llama-3.3-70b-versatile", "mixtral-8x7b-32768"]
+        ),
+        PopularProviderPreset(
+            id: "openrouter",
+            company: "OpenRouter",
+            endpoint: "https://openrouter.ai/api",
+            models: ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o-mini"]
+        ),
+        PopularProviderPreset(
+            id: "deepseek",
+            company: "DeepSeek",
+            endpoint: "https://api.deepseek.com",
+            models: ["deepseek-chat", "deepseek-reasoner", "deepseek-coder"]
+        ),
+        PopularProviderPreset(
+            id: "together",
+            company: "Together AI",
+            endpoint: "https://api.together.xyz/v1",
+            models: ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo", "mistralai/Mixtral-8x7B-Instruct-v0.1"]
+        ),
+        PopularProviderPreset(
+            id: "cohere",
+            company: "Cohere",
+            endpoint: "https://api.cohere.com/v1",
+            models: ["command-r-plus", "command-r", "command"]
+        ),
+        PopularProviderPreset(
+            id: "perplexity",
+            company: "Perplexity",
+            endpoint: "https://api.perplexity.ai",
+            models: ["sonar", "sonar-pro", "sonar-reasoning"]
+        ),
     ]
 
+    private var selectedPreset: PopularProviderPreset? {
+        Self.popularProviderPresets.first(where: { $0.id == selectedProvider })
+    }
+
+    private var normalizedCustomProvider: String {
+        customProvider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private var normalizedProvider: String {
-        provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if state.mode == .rotate {
+            return state.provider
+        }
+        if selectedProvider == Self.customProviderOption {
+            return normalizedCustomProvider
+        }
+        return selectedProvider
     }
 
     private var trimmedKey: String {
@@ -1408,6 +1488,14 @@ private struct VaultKeyEditorSheet: View {
 
     private var trimmedEndpoint: String {
         endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedModel: String {
+        model.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var modelOptions: [String] {
+        selectedPreset?.models ?? []
     }
 
     private var isValidProviderName: Bool {
@@ -1420,7 +1508,14 @@ private struct VaultKeyEditorSheet: View {
         if let existing = knownUpstreams[normalizedProvider], !existing.isEmpty {
             return existing
         }
-        return Self.smartDefaults[normalizedProvider]
+        if let preset = selectedPreset {
+            return preset.endpoint
+        }
+        return nil
+    }
+
+    private var suggestedModel: String? {
+        modelOptions.first
     }
 
     private var resolvedEndpoint: String? {
@@ -1428,6 +1523,13 @@ private struct VaultKeyEditorSheet: View {
             return trimmedEndpoint
         }
         return suggestedEndpoint
+    }
+
+    private var resolvedModel: String? {
+        if !trimmedModel.isEmpty {
+            return trimmedModel
+        }
+        return suggestedModel
     }
 
     private var requiresEndpoint: Bool {
@@ -1441,6 +1543,9 @@ private struct VaultKeyEditorSheet: View {
                 return false
             }
             if requiresEndpoint && resolvedEndpoint == nil {
+                return false
+            }
+            if resolvedModel == nil {
                 return false
             }
             return true
@@ -1461,20 +1566,57 @@ private struct VaultKeyEditorSheet: View {
         endpointManuallyEdited = false
     }
 
+    private func applyModelSuggestionIfNeeded() {
+        guard state.mode == .add else { return }
+        if modelManuallyEdited && !trimmedModel.isEmpty {
+            return
+        }
+        let value = suggestedModel ?? ""
+        model = value
+        modelManuallyEdited = false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(state.mode == .add ? "Add API key" : "Rotate API key")
                 .font(.system(size: 16, weight: .semibold))
 
             if state.mode == .add {
-                TextField("Provider name (e.g. anthropic, deepseek)", text: $provider)
-                    .textFieldStyle(.roundedBorder)
-                    .autocorrectionDisabled()
+                Picker("AI API", selection: $selectedProvider) {
+                    ForEach(Self.popularProviderPresets) { preset in
+                        Text(preset.company).tag(preset.id)
+                    }
+                    Text("Custom").tag(Self.customProviderOption)
+                }
+                .pickerStyle(.menu)
+
+                if selectedProvider == Self.customProviderOption {
+                    TextField("Custom provider slug (e.g. myprovider)", text: $customProvider)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                } else {
+                    Text("Provider: \(normalizedProvider)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                }
+
+                if !modelOptions.isEmpty {
+                    Picker("Model", selection: $model) {
+                        ForEach(modelOptions, id: \.self) { option in
+                            Text(option).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } else {
+                    TextField("Model", text: $model)
+                        .textFieldStyle(.roundedBorder)
+                        .autocorrectionDisabled()
+                }
 
                 TextField("Endpoint URL (optional for known providers)", text: $endpoint)
                     .textFieldStyle(.roundedBorder)
 
-                Text("Known providers are prefilled. For new custom providers, set full endpoint URL.")
+                Text("Choose company + model, paste key, done. Endpoint is prefilled and can be overridden.")
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(TokfenceTheme.textSecondary)
 
@@ -1486,6 +1628,12 @@ private struct VaultKeyEditorSheet: View {
 
                 if requiresEndpoint && trimmedEndpoint.isEmpty {
                     Text("Endpoint is required for unknown custom providers.")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.warning)
+                }
+
+                if resolvedModel == nil {
+                    Text("Model is required.")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(TokfenceTheme.warning)
                 }
@@ -1512,7 +1660,8 @@ private struct VaultKeyEditorSheet: View {
                     onSubmit(VaultKeySubmission(
                         provider: state.mode == .add ? normalizedProvider : state.provider,
                         key: trimmedKey,
-                        endpoint: state.mode == .add ? resolvedEndpoint : nil
+                        endpoint: state.mode == .add ? resolvedEndpoint : nil,
+                        model: state.mode == .add ? resolvedModel : nil
                     ))
                     dismiss()
                 }
@@ -1524,16 +1673,35 @@ private struct VaultKeyEditorSheet: View {
         .padding(16)
         .frame(minWidth: 460)
         .onAppear {
-            provider = state.provider
+            if state.mode == .add {
+                if !state.provider.isEmpty,
+                   Self.popularProviderPresets.contains(where: { $0.id == state.provider }) {
+                    selectedProvider = state.provider
+                } else {
+                    selectedProvider = "anthropic"
+                    customProvider = state.provider
+                }
+            }
             endpoint = state.upstream
             applyEndpointSuggestionIfNeeded()
+            applyModelSuggestionIfNeeded()
         }
-        .onChange(of: provider) { _, _ in
+        .onChange(of: selectedProvider) { _, _ in
             applyEndpointSuggestionIfNeeded()
+            applyModelSuggestionIfNeeded()
+        }
+        .onChange(of: customProvider) { _, _ in
+            applyEndpointSuggestionIfNeeded()
+            applyModelSuggestionIfNeeded()
         }
         .onChange(of: endpoint) { _, _ in
             if state.mode == .add && !suppressEndpointTracking {
                 endpointManuallyEdited = true
+            }
+        }
+        .onChange(of: model) { _, _ in
+            if state.mode == .add {
+                modelManuallyEdited = true
             }
         }
     }
@@ -1603,7 +1771,10 @@ private struct SetupWizardSheet: View {
     }
 
     private var suggestedModel: String {
-        Self.modelDefaults[normalizedProvider] ?? "gpt-4o-mini"
+        if let preferred = viewModel.preferredModel(for: normalizedProvider) {
+            return preferred
+        }
+        return Self.modelDefaults[normalizedProvider] ?? "gpt-4o-mini"
     }
 
     private var canRun: Bool {

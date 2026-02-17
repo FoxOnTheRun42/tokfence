@@ -18,7 +18,10 @@ struct TokfenceCommandRunner {
     var configuredBinaryPath: String {
         get {
             if let stored = UserDefaults.standard.string(forKey: binaryPathKey), !stored.isEmpty {
-                return stored
+                let expanded = expandPath(stored)
+                if FileManager.default.isExecutableFile(atPath: expanded) {
+                    return expanded
+                }
             }
             return resolveDefaultBinaryPath()
         }
@@ -270,20 +273,24 @@ struct TokfenceCommandRunner {
                         userInfo: [NSLocalizedDescriptionKey: "Unable to decode command output as UTF-8"]
                     )
                 }
-                return try JSONDecoder.tokfence.decode(T.self, from: data)
+                do {
+                    return try JSONDecoder.tokfence.decode(T.self, from: data)
+                } catch {
+                    throw NSError(
+                        domain: "TokfenceCommandRunner",
+                        code: 4,
+                        userInfo: [
+                            NSLocalizedDescriptionKey: "Failed to decode tokfence JSON output for \(arguments.joined(separator: " ")): \(error.localizedDescription)",
+                        ],
+                    )
+                }
             } catch {
                 lastError = error
                 if attempt < retryAttempts-1 && isTransientCommandFailure(error) {
                     Thread.sleep(forTimeInterval: 0.15)
                     continue
                 }
-                throw NSError(
-                    domain: "TokfenceCommandRunner",
-                    code: 4,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: "Failed to decode tokfence JSON output for \(arguments.joined(separator: " ")): \(error.localizedDescription)",
-                    ],
-                )
+                throw error
             }
         }
         if let lastError {
@@ -298,7 +305,12 @@ struct TokfenceCommandRunner {
 
     private func run(arguments: [String], stdin: String? = nil) throws -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: configuredBinaryPath)
+        guard let executablePath = resolveExecutablePathForRun() else {
+            throw NSError(domain: "TokfenceCommandRunner", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to locate tokfence binary. Checked: \(binaryLookupCandidates().joined(separator: ", "))",
+            ])
+        }
+        process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
 
         let outputPipe = Pipe()
@@ -320,7 +332,7 @@ struct TokfenceCommandRunner {
             }
         } catch {
             throw NSError(domain: "TokfenceCommandRunner", code: 2, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to start tokfence binary at \(configuredBinaryPath). Set a valid binary path in the app."
+                NSLocalizedDescriptionKey: "Failed to start tokfence binary at \(executablePath). Set a valid binary path in the app."
             ])
         }
 
@@ -352,28 +364,112 @@ struct TokfenceCommandRunner {
     }
 
     private func resolveDefaultBinaryPath() -> String {
-        let preferred = [
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/bin/tokfence",
-            "/opt/homebrew/bin/tokfence",
-            "/usr/local/bin/tokfence"
-        ]
-        for path in preferred where FileManager.default.isExecutableFile(atPath: path) {
-            return path
-        }
-
-        let whichProcess = Process()
-        whichProcess.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichProcess.arguments = ["tokfence"]
-        let pipe = Pipe()
-        whichProcess.standardOutput = pipe
-        try? whichProcess.run()
-        whichProcess.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let detected = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !detected.isEmpty {
+        if let detected = resolveExecutablePathForRun() {
             return detected
         }
         return "/opt/homebrew/bin/tokfence"
+    }
+
+    private func resolveExecutablePathForRun() -> String? {
+        for candidate in binaryLookupCandidates() {
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                if UserDefaults.standard.string(forKey: binaryPathKey) != candidate {
+                    UserDefaults.standard.set(candidate, forKey: binaryPathKey)
+                }
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    private func binaryLookupCandidates() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let cwd = FileManager.default.currentDirectoryPath
+        var candidates: [String] = []
+
+        if let stored = UserDefaults.standard.string(forKey: binaryPathKey), !stored.isEmpty {
+            candidates.append(stored)
+        }
+
+        if let envBinary = ProcessInfo.processInfo.environment["TOKFENCE_BINARY"], !envBinary.isEmpty {
+            candidates.append(envBinary)
+        }
+
+        candidates.append(contentsOf: [
+            "\(home)/bin/tokfence",
+            "\(home)/.local/bin/tokfence",
+            "/opt/homebrew/bin/tokfence",
+            "/usr/local/bin/tokfence",
+            "/usr/bin/tokfence",
+            "/tmp/tokfence",
+            "\(cwd)/tokfence",
+            "\(cwd)/bin/tokfence",
+            "\(home)/tmp/glasbox/glasbox/tokfence",
+            "\(home)/tmp/glasbox/glasbox/bin/tokfence",
+        ])
+
+        if let whichDetected = detectBinaryWithWhich() {
+            candidates.append(whichDetected)
+        }
+
+        var unique: [String] = []
+        var seen = Set<String>()
+        for rawPath in candidates {
+            let expanded = expandPath(rawPath)
+            guard !expanded.isEmpty else { continue }
+            if seen.insert(expanded).inserted {
+                unique.append(expanded)
+            }
+        }
+        return unique
+    }
+
+    private func detectBinaryWithWhich() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let extra = [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "\(home)/bin",
+            "\(home)/.local/bin",
+        ].joined(separator: ":")
+        let mergedPath = [existingPath, extra]
+            .filter { !$0.isEmpty }
+            .joined(separator: ":")
+
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = mergedPath
+        process.environment = env
+        process.arguments = ["which", "tokfence"]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let detected = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        if detected.isEmpty {
+            return nil
+        }
+        return detected
+    }
+
+    private func expandPath(_ path: String) -> String {
+        (path as NSString).expandingTildeInPath
     }
 
     private func normalizeHostPort(_ raw: String) -> String {
