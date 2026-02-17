@@ -236,6 +236,32 @@ func TestGenerateConfig_LinuxHost(t *testing.T) {
 	}
 }
 
+func TestGenerateConfig_ControlUIEnabled(t *testing.T) {
+	cfg := config.Default()
+	out, _, err := GenerateOpenClawConfig([]string{"anthropic"}, cfg)
+	if err != nil {
+		t.Fatalf("generate config: %v", err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatalf("valid json: %v", err)
+	}
+	gw, err := nestedMap(parsed, "gateway")
+	if err != nil {
+		t.Fatalf("gateway missing: %v", err)
+	}
+	controlUI, err := nestedMap(gw, "controlUi")
+	if err != nil {
+		t.Fatalf("gateway.controlUi missing: %v", err)
+	}
+	if enabled, ok := controlUI["enabled"].(bool); !ok || !enabled {
+		t.Fatalf("controlUi.enabled=%v, want true", controlUI["enabled"])
+	}
+	if insecure, ok := controlUI["allowInsecureAuth"].(bool); !ok || !insecure {
+		t.Fatalf("controlUi.allowInsecureAuth=%v, want true", controlUI["allowInsecureAuth"])
+	}
+}
+
 func TestGenerateConfig_DummyKeyNeverReal(t *testing.T) {
 	cfg := config.Default()
 	out, _, err := GenerateOpenClawConfig([]string{"anthropic", "openai", "google"}, cfg)

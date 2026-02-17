@@ -53,10 +53,16 @@ type openClawWizard struct {
 }
 
 type openClawGateway struct {
-	Port int                 `json:"port"`
-	Mode string              `json:"mode"`
-	Bind string              `json:"bind"`
-	Auth openClawGatewayAuth `json:"auth"`
+	Port      int                    `json:"port"`
+	Mode      string                 `json:"mode"`
+	Bind      string                 `json:"bind"`
+	Auth      openClawGatewayAuth    `json:"auth"`
+	ControlUI openClawControlUI      `json:"controlUi"`
+}
+
+type openClawControlUI struct {
+	Enabled           bool `json:"enabled"`
+	AllowInsecureAuth bool `json:"allowInsecureAuth"`
 }
 
 type openClawGatewayAuth struct {
@@ -131,6 +137,10 @@ func GenerateOpenClawConfig(vaultProviders []string, tokCfg config.Config) ([]by
 			Auth: openClawGatewayAuth{
 				Mode:  "token",
 				Token: token,
+			},
+			ControlUI: openClawControlUI{
+				Enabled:           true,
+				AllowInsecureAuth: true,
 			},
 		},
 		Models: openClawModels{
