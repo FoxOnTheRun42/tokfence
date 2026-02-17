@@ -27,7 +27,7 @@ this attack surface: the container never sees your real keys.
 - **Leak detection** — `tokfence watch` monitors for exposed credentials.
 - **One-click OpenClaw** — `tokfence launch` starts a secure OpenClaw in Docker.
 
-![Tokfence Dashboard](docs/launch/screenshot_dashboard.png)
+![Tokfence Runtime](docs/launch/screenshot_agents_transition_runtime.png)
 
 Launch assets + E2E capture: `docs/launch/`
 
@@ -63,6 +63,7 @@ Important boundary:
 - Budgets, revoke/restore, rate limits, and kill switch are the containment controls for this case.
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and disclosure policy.
+Production-readiness gates: [`docs/product-readiness-checklist.md`](docs/product-readiness-checklist.md)
 
 ## Quickstart
 
@@ -230,13 +231,9 @@ In the app:
 
 Current launch visuals are versioned in `docs/launch/`:
 
-| Dashboard | Vault |
-| --- | --- |
-| ![Tokfence Dashboard](docs/launch/screenshot_dashboard.png) | ![Tokfence Vault](docs/launch/screenshot_vault.png) |
-
-| Providers | Kill Switch |
-| --- | --- |
-| ![Tokfence Providers](docs/launch/screenshot_providers.png) | ![Tokfence Kill Switch](docs/launch/screenshot_killswitch.png) |
+| Guided Setup (Missing Docker) | Guided Setup (Ready) | Runtime |
+| --- | --- | --- |
+| ![Tokfence Guided Setup Missing Docker](docs/launch/screenshot_agents_guided_missing.png) | ![Tokfence Guided Setup Ready](docs/launch/screenshot_agents_guided_ready.png) | ![Tokfence Runtime Running](docs/launch/screenshot_agents_transition_runtime.png) |
 
 Live E2E terminal capture: [`docs/launch/e2e_output.txt`](docs/launch/e2e_output.txt)
 

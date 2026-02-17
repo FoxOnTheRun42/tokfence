@@ -4,10 +4,9 @@ This folder contains the screenshots and launch visuals used in README, social p
 
 ## Core screenshots
 
-- `screenshot_dashboard.png`
-- `screenshot_vault.png`
-- `screenshot_providers.png`
-- `screenshot_killswitch.png`
+- `screenshot_agents_guided_missing.png`
+- `screenshot_agents_guided_ready.png`
+- `screenshot_agents_transition_runtime.png`
 
 ## Infographics
 
