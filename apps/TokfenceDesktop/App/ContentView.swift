@@ -1455,6 +1455,7 @@ private struct AgentsSectionView: View {
                 Label("Start", systemImage: "play.fill")
                     .frame(maxWidth: .infinity)
             }
+            .accessibilityIdentifier("agents.start")
             .buttonStyle(.borderedProminent)
             .tint(TokfenceTheme.healthy)
             .frame(minHeight: 44)
@@ -1513,6 +1514,7 @@ private struct AgentsSectionView: View {
                 Label("Start OpenClaw", systemImage: "play.fill")
                     .frame(maxWidth: .infinity)
             }
+            .accessibilityIdentifier("agents.startOpenClaw")
             .buttonStyle(.borderedProminent)
             .tint(TokfenceTheme.healthy)
             .frame(minHeight: 44)
@@ -1556,6 +1558,7 @@ private struct AgentsSectionView: View {
                     Label("Open OpenClaw", systemImage: "rectangle.and.cursor.arrow")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("agents.openDashboard")
                 .overlay {
                     if isOpeningAgentTarget {
                         ProgressView()
@@ -1575,6 +1578,7 @@ private struct AgentsSectionView: View {
                     Label("Go to OpenClaw", systemImage: "arrow.up.right.square")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("agents.openGateway")
                 .overlay {
                     if isOpeningAgentTarget {
                         ProgressView()
@@ -1592,6 +1596,7 @@ private struct AgentsSectionView: View {
                     Label("Stop", systemImage: "stop.fill")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("agents.stop")
                 .buttonStyle(.bordered)
                 .tint(TokfenceTheme.danger)
                 .disabled(viewModel.launchBusy)
@@ -1602,6 +1607,7 @@ private struct AgentsSectionView: View {
                     Label("Restart", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("agents.restart")
                 .buttonStyle(.bordered)
                 .disabled(viewModel.launchBusy)
             }
@@ -1648,6 +1654,7 @@ private struct AgentsSectionView: View {
                     Label("Retry", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("agents.retryStart")
                 .buttonStyle(.borderedProminent)
                 .tint(TokfenceTheme.warning)
                 .disabled(viewModel.launchBusy)
