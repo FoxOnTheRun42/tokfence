@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -15,6 +16,13 @@ const (
 	dockerErrNotInstalled = "Docker is not installed. Install Docker Desktop from https://docker.com/get-started"
 	dockerErrDaemonDown   = "Docker daemon is not running. Start Docker Desktop and try again."
 )
+
+var dockerBinaryCandidates = []string{
+	"/opt/homebrew/bin/docker",
+	"/usr/local/bin/docker",
+	"/Applications/Docker.app/Contents/Resources/bin/docker",
+	"/Applications/Docker.app/Contents/MacOS/com.docker.cli",
+}
 
 type ContainerOpts struct {
 	Name       string
@@ -40,7 +48,10 @@ func PullImage(ctx context.Context, image string, w io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "pull", image)
+	cmd, err := dockerCommandContext(ctx, "pull", image)
+	if err != nil {
+		return err
+	}
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
@@ -120,7 +131,10 @@ func ContainerLogs(ctx context.Context, name string, follow bool, w io.Writer) e
 	}
 	args = append(args, name)
 
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd, err := dockerCommandContext(ctx, args...)
+	if err != nil {
+		return err
+	}
 	cmd.Stdout = w
 	cmd.Stderr = w
 	return cmd.Run()
@@ -137,7 +151,10 @@ func IsPortAvailable(port int) bool {
 }
 
 func runDockerCommand(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd, err := dockerCommandContext(ctx, args...)
+	if err != nil {
+		return "", err
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -145,6 +162,34 @@ func runDockerCommand(ctx context.Context, args ...string) (string, error) {
 		return out.String(), err
 	}
 	return out.String(), nil
+}
+
+func dockerCommandContext(ctx context.Context, args ...string) (*exec.Cmd, error) {
+	bin, err := resolveDockerBinary()
+	if err != nil {
+		return nil, err
+	}
+	return exec.CommandContext(ctx, bin, args...), nil
+}
+
+func resolveDockerBinary() (string, error) {
+	if path, err := exec.LookPath("docker"); err == nil {
+		return path, nil
+	}
+	for _, candidate := range dockerBinaryCandidates {
+		if isExecutableFile(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("docker binary not found")
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func isDockerNotFoundError(err error, output string) bool {
@@ -173,6 +218,7 @@ func dockerAvailabilityError(err error, output string) error {
 	outputLower := strings.ToLower(output)
 	errLower := strings.ToLower(err.Error())
 	if strings.Contains(errLower, "executable file not found") ||
+		strings.Contains(errLower, "docker binary not found") ||
 		strings.Contains(errLower, "no such file or directory") ||
 		strings.Contains(outputLower, "command not found") {
 		return fmt.Errorf("%s", dockerErrNotInstalled)

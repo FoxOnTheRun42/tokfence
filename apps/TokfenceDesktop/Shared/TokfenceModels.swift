@@ -1,30 +1,30 @@
 import Foundation
 
-enum TokfenceSection: String, CaseIterable, Identifiable {
-    case dashboard
+enum TokfenceSection: String, Identifiable {
+    case agents
+    case overview
     case vault
-    case logs
+    case activity
     case budget
     case providers
-    case launch
     case settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .dashboard:
-            return "Dashboard"
+        case .agents:
+            return "Agents"
+        case .overview:
+            return "Overview"
         case .vault:
             return "Vault"
-        case .logs:
-            return "Logs"
+        case .activity:
+            return "Activity"
         case .budget:
             return "Budget"
         case .providers:
             return "Providers"
-        case .launch:
-            return "Launch"
         case .settings:
             return "Settings"
         }
@@ -32,22 +32,53 @@ enum TokfenceSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .dashboard:
+        case .agents:
+            return "cpu.fill"
+        case .overview:
             return "gauge.with.dots.needle.33percent"
         case .vault:
             return "key.fill"
-        case .logs:
+        case .activity:
             return "list.bullet.rectangle"
         case .budget:
             return "dollarsign.circle"
         case .providers:
             return "server.rack"
-        case .launch:
-            return "play.circle.fill"
         case .settings:
             return "gearshape"
         }
     }
+
+    /// Primary zone: the main feature (Agents)
+    static let primary: [TokfenceSection] = [.agents]
+
+    /// Secondary zone: proxy infrastructure
+    static let proxy: [TokfenceSection] = [.overview, .vault, .activity, .budget, .providers]
+
+    /// Utility zone
+    static let utility: [TokfenceSection] = [.settings]
+}
+
+enum TokfenceAgentStatus: String, Hashable {
+    case stopped
+    case starting
+    case running
+    case error
+    case placeholder
+}
+
+struct TokfenceAgentCardModel: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let subtitle: String
+    let status: TokfenceAgentStatus
+    let uptimeText: String
+    let gatewayURL: String
+    let dashboardURL: String
+    let providers: [String]
+    let recentActivity: [TokfenceLogRecord]
+    let lastError: String
+    let isPlaceholder: Bool
 }
 
 struct TokfenceDaemonStatus: Codable, Hashable {

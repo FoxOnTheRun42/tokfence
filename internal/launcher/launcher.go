@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -77,9 +78,11 @@ func (l *Launcher) Preflight(ctx context.Context) []error {
 		failures = append(failures, err)
 	}
 
+	dockerAvailable := false
 	if err := DockerAvailable(ctx); err != nil {
 		fail(err)
 	} else {
+		dockerAvailable = true
 		mark("✓ Docker is running")
 	}
 
@@ -102,25 +105,29 @@ func (l *Launcher) Preflight(ctx context.Context) []error {
 		mark(fmt.Sprintf("✓ Found %d API keys: %s", len(vaultProviders), strings.Join(vaultProviders, ", ")))
 	}
 
-	status, statusErr := ContainerStatus(ctx, l.Config.ContainerName)
-	if statusErr != nil {
-		fail(statusErr)
-	} else {
-		switch strings.ToLower(strings.TrimSpace(status)) {
-		case "running":
-			fail(&LaunchAlreadyRunningError{ContainerName: l.Config.ContainerName})
-		case "exited", "created":
-			if err := StopAndRemoveContainer(ctx, l.Config.ContainerName); err != nil {
-				fail(err)
+	status := ""
+	if dockerAvailable {
+		statusResult, statusErr := ContainerStatus(ctx, l.Config.ContainerName)
+		if statusErr != nil {
+			fail(statusErr)
+		} else {
+			status = statusResult
+			switch strings.ToLower(strings.TrimSpace(status)) {
+			case "running":
+				fail(&LaunchAlreadyRunningError{ContainerName: l.Config.ContainerName})
+			case "exited", "created":
+				if err := StopAndRemoveContainer(ctx, l.Config.ContainerName); err != nil {
+					fail(err)
+				}
 			}
 		}
-	}
 
-	if strings.ToLower(strings.TrimSpace(status)) != "running" {
-		if IsPortAvailable(l.Config.GatewayPort) {
-			mark(fmt.Sprintf("✓ Port %d is available", l.Config.GatewayPort))
-		} else {
-			fail(fmt.Errorf("port %d is not available", l.Config.GatewayPort))
+		if strings.ToLower(strings.TrimSpace(status)) != "running" {
+			if IsPortAvailable(l.Config.GatewayPort) {
+				mark(fmt.Sprintf("✓ Port %d is available", l.Config.GatewayPort))
+			} else {
+				fail(fmt.Errorf("port %d is not available", l.Config.GatewayPort))
+			}
 		}
 	}
 
@@ -205,7 +212,7 @@ func (l *Launcher) Launch(ctx context.Context) (*LaunchResult, error) {
 			workspaceDir + ":/home/node/.openclaw/workspace",
 		},
 		Ports: []string{
-			fmt.Sprintf("%d:18789", l.Config.GatewayPort),
+			fmt.Sprintf("%d:%d", l.Config.GatewayPort, openclawGatewayPort),
 		},
 		ExtraHosts: []string{
 			"host.docker.internal:host-gateway",
@@ -222,7 +229,8 @@ func (l *Launcher) Launch(ctx context.Context) (*LaunchResult, error) {
 	}
 
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", l.Config.GatewayPort)
-	if err := waitForTCP(gatewayURL, 30*time.Second); err != nil {
+	dashboardURL := fmt.Sprintf("%s/?token=%s", gatewayURL, cfg.Gateway.Auth.Token)
+	if err := waitForHTTPGateway(ctx, dashboardURL, 30*time.Second); err != nil {
 		_ = StopAndRemoveContainer(ctx, l.Config.ContainerName)
 		return nil, err
 	}
@@ -233,7 +241,7 @@ func (l *Launcher) Launch(ctx context.Context) (*LaunchResult, error) {
 		fmt.Fprintf(l.Stdout, "✓ Gateway ready at %s\n\n", gatewayURL)
 		fmt.Fprintln(l.Stdout, "OpenClaw is running. All API traffic flows through Tokfence.")
 		fmt.Fprintln(l.Stdout, "No API keys are stored in the container.")
-		fmt.Fprintf(l.Stdout, "Dashboard: %s/?token=%s\n", gatewayURL, cfg.Gateway.Auth.Token)
+		fmt.Fprintf(l.Stdout, "Dashboard: %s\n", dashboardURL)
 		fmt.Fprintln(l.Stdout, "Logs:      tokfence launch logs -f")
 		fmt.Fprintln(l.Stdout, "Stop:      tokfence launch stop")
 	}
@@ -242,7 +250,7 @@ func (l *Launcher) Launch(ctx context.Context) (*LaunchResult, error) {
 		ContainerID:  containerID,
 		GatewayURL:   gatewayURL,
 		GatewayToken: gatewayToken,
-		DashboardURL: fmt.Sprintf("%s/?token=%s", gatewayURL, cfg.Gateway.Auth.Token),
+		DashboardURL: dashboardURL,
 		Providers:    orderedProviders,
 		PrimaryModel: cfg.Agents.Defaults.Model.Primary,
 		ConfigPath:   configPath,
@@ -296,6 +304,11 @@ func (l *Launcher) Status(ctx context.Context) (*LaunchResult, error) {
 	}
 	result.Providers = sortProvidersByPriority(cfg.Models.Providers)
 	result.PrimaryModel = cfg.Agents.Defaults.Model.Primary
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := probeHTTPGateway(checkCtx, result.DashboardURL); err != nil {
+		result.Status = "unreachable"
+	}
 
 	return result, nil
 }
@@ -371,6 +384,44 @@ func waitForTCP(rawURL string, timeout time.Duration) error {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+func waitForHTTPGateway(ctx context.Context, dashboardURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		lastErr = probeHTTPGateway(ctx, dashboardURL)
+		if lastErr == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if lastErr != nil {
+				return fmt.Errorf("dashboard %s not reachable within %s: %w", dashboardURL, timeout, lastErr)
+			}
+			return fmt.Errorf("dashboard %s not reachable within %s", dashboardURL, timeout)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func probeHTTPGateway(ctx context.Context, dashboardURL string) error {
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dashboardURL, nil)
+	if err != nil {
+		return fmt.Errorf("build dashboard request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 600 {
+		return fmt.Errorf("unexpected dashboard status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func sortProvidersByPriority(providers map[string]openClawProviderConfig) []string {

@@ -31,16 +31,19 @@ private struct TokfenceAppCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Tokfence") {
-            Button("Dashboard") { viewModel.selectedSection = .dashboard }
+            Button("Agents") { viewModel.selectedSection = .agents }
                 .keyboardShortcut("1", modifiers: .command)
-            Button("Vault") { viewModel.selectedSection = .vault }
+            Divider()
+            Button("Overview") { viewModel.selectedSection = .overview }
                 .keyboardShortcut("2", modifiers: .command)
-            Button("Logs") { viewModel.selectedSection = .logs }
+            Button("Vault") { viewModel.selectedSection = .vault }
                 .keyboardShortcut("3", modifiers: .command)
-            Button("Budget") { viewModel.selectedSection = .budget }
+            Button("Activity") { viewModel.selectedSection = .activity }
                 .keyboardShortcut("4", modifiers: .command)
-            Button("Providers") { viewModel.selectedSection = .providers }
+            Button("Budget") { viewModel.selectedSection = .budget }
                 .keyboardShortcut("5", modifiers: .command)
+            Button("Providers") { viewModel.selectedSection = .providers }
+                .keyboardShortcut("6", modifiers: .command)
             Divider()
             Button("Settings") { viewModel.selectedSection = .settings }
                 .keyboardShortcut(",", modifiers: .command)

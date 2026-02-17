@@ -416,7 +416,12 @@ struct TokfenceCommandRunner {
         let stderr = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 
         if process.terminationStatus != 0 {
-            let message = stderr.isEmpty ? "tokfence command failed (exit \(process.terminationStatus))" : stderr
+            let message: String
+            if stderr.isEmpty {
+                message = "tokfence command failed (exit \(process.terminationStatus))"
+            } else {
+                message = sanitizeCLIError(stderr)
+            }
             throw NSError(domain: "TokfenceCommandRunner", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
         }
 
@@ -426,6 +431,46 @@ struct TokfenceCommandRunner {
     private func isTransientCommandFailure(_ error: Error) -> Bool {
         let message = error.localizedDescription.lowercased()
         return message.contains("timed out") || message.contains("connection refused") || message.contains("exit code 2")
+    }
+
+    private func sanitizeCLIError(_ raw: String) -> String {
+        let lines = raw
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var cleaned: [String] = []
+        for line in lines {
+            let lower = line.lowercased()
+            if lower.hasPrefix("usage:") || lower.hasPrefix("available commands:") || lower.hasPrefix("flags:") || lower.hasPrefix("global flags:") {
+                break
+            }
+            if lower.hasPrefix("use \"tokfence launch") {
+                break
+            }
+            if line.hasPrefix("✓") {
+                continue
+            }
+            if lower.hasPrefix("error: ") {
+                cleaned.append(String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces))
+                continue
+            }
+            if lower.hasPrefix("tokfence launch [") {
+                continue
+            }
+            cleaned.append(line)
+        }
+
+        let unique = cleaned.reduce(into: [String]()) { acc, line in
+            if !acc.contains(line) {
+                acc.append(line)
+            }
+        }
+
+        if unique.isEmpty {
+            return lines.first ?? raw
+        }
+        return unique.joined(separator: "\n")
     }
 
     private func resolveDefaultBinaryPath() -> String {

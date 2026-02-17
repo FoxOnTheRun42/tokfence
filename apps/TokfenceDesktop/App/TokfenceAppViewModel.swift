@@ -91,7 +91,7 @@ final class TokfenceAppViewModel: ObservableObject {
         case exceeded = 2
     }
 
-    @Published var selectedSection: TokfenceSection = .dashboard
+    @Published var selectedSection: TokfenceSection = .agents
     @Published var snapshot: TokfenceSnapshot = TokfenceSharedStore.loadSnapshot()
     @Published var daemonStatus: TokfenceDaemonStatus = TokfenceDaemonStatus(running: false, pid: nil, addr: nil, started: nil, error: nil)
     @Published var logs: [TokfenceLogRecord] = []
@@ -210,6 +210,96 @@ final class TokfenceAppViewModel: ObservableObject {
 
     var globalMonthlyBudget: TokfenceBudget? {
         snapshot.budgets.first(where: { $0.provider == "global" && $0.period.lowercased() == "monthly" })
+    }
+
+    var runningAgentsCount: Int {
+        primaryAgentCard.status == .running ? 1 : 0
+    }
+
+    var primaryAgentCard: TokfenceAgentCardModel {
+        let statusText = launchResult.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lastErrorText = lastError.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status: TokfenceAgentStatus
+        if launchBusy {
+            status = .starting
+        } else if statusText.contains("running") || !launchResult.containerID.isEmpty {
+            status = .running
+        } else if !lastErrorText.isEmpty &&
+            (lastErrorText.contains("docker") ||
+             lastErrorText.contains("launch") ||
+             lastErrorText.contains("container") ||
+             lastErrorText.contains("daemon")) {
+            status = .error
+        } else if statusText.contains("error") || statusText.contains("failed") || statusText.contains("unreachable") {
+            status = .error
+        } else {
+            status = .stopped
+        }
+
+        let subtitle: String
+        if launchResult.primaryModel.isEmpty {
+            subtitle = "Code Agent"
+        } else {
+            subtitle = "Code Agent · \(launchResult.primaryModel)"
+        }
+
+        let errorMessage: String
+        if status == .error {
+            if !lastError.isEmpty {
+                errorMessage = lastError
+            } else if !launchResult.status.isEmpty {
+                errorMessage = "Launch status: \(launchResult.status)"
+            } else {
+                errorMessage = "OpenClaw is not reachable. Retry launch."
+            }
+        } else {
+            errorMessage = ""
+        }
+
+        return TokfenceAgentCardModel(
+            id: "openclaw",
+            name: "OpenClaw",
+            subtitle: subtitle,
+            status: status,
+            uptimeText: status == .running ? "Live now" : "",
+            gatewayURL: launchResult.gatewayURL,
+            dashboardURL: launchResult.dashboardURL,
+            providers: launchResult.providers,
+            recentActivity: Array(logs.prefix(3)),
+            lastError: errorMessage,
+            isPlaceholder: false
+        )
+    }
+
+    var placeholderAgentCards: [TokfenceAgentCardModel] {
+        [
+            TokfenceAgentCardModel(
+                id: "cline-placeholder",
+                name: "Cline",
+                subtitle: "Coming soon",
+                status: .placeholder,
+                uptimeText: "",
+                gatewayURL: "",
+                dashboardURL: "",
+                providers: [],
+                recentActivity: [],
+                lastError: "",
+                isPlaceholder: true
+            ),
+            TokfenceAgentCardModel(
+                id: "aider-placeholder",
+                name: "Aider",
+                subtitle: "Coming soon",
+                status: .placeholder,
+                uptimeText: "",
+                gatewayURL: "",
+                dashboardURL: "",
+                providers: [],
+                recentActivity: [],
+                lastError: "",
+                isPlaceholder: true
+            ),
+        ]
     }
 
     func start() {
@@ -377,7 +467,17 @@ final class TokfenceAppViewModel: ObservableObject {
         noPull: Bool = false,
         openDashboard: Bool = true
     ) async {
-        await runAndRefreshLaunch {
+        guard !launchBusy else {
+            return
+        }
+        launchBusy = true
+        clearError()
+        defer {
+            launchBusy = false
+        }
+
+        do {
+            try await ensureDaemonRunningForLaunch()
             let parsedPort = try parseLaunchPort(portText)
             let result = try runner.launchStart(
                 image: image,
@@ -390,6 +490,9 @@ final class TokfenceAppViewModel: ObservableObject {
             launchResult = result
             launchLogsOutput = ""
             launchConfigOutput = ""
+            await refreshAll()
+        } catch {
+            setError(error.localizedDescription)
         }
     }
 
@@ -596,6 +699,31 @@ final class TokfenceAppViewModel: ObservableObject {
             )
         }
         return port
+    }
+
+    private func ensureDaemonRunningForLaunch() async throws {
+        let status = try runner.fetchStatus()
+        if status.running {
+            daemonStatus = status
+            return
+        }
+
+        try runner.startDaemon()
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            try await Task.sleep(nanoseconds: 300_000_000)
+            let current = try runner.fetchStatus()
+            if current.running {
+                daemonStatus = current
+                return
+            }
+        }
+
+        throw NSError(
+            domain: "TokfenceDesktop",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Tokfence daemon did not become reachable in time"]
+        )
     }
 
     func dismissErrorToast() {

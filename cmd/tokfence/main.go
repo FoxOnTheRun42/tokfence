@@ -41,8 +41,10 @@ const daemonNonceEnv = "TOKFENCE_DAEMON_NONCE"
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "tokfence",
-		Short: "Tokfence is a local-first AI API gateway and key vault",
+		Use:           "tokfence",
+		Short:         "Tokfence is a local-first AI API gateway and key vault",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 	}
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", config.DefaultConfigPath(), "path to config file")
 	rootCmd.PersistentFlags().BoolVar(&outputJSON, "json", false, "output JSON")
@@ -1430,8 +1432,9 @@ func newSetupCommand() *cobra.Command {
 
 func buildLaunchCmd(configPath string) *cobra.Command {
 	launchCmd := &cobra.Command{
-		Use:   "launch",
-		Short: "Launch OpenClaw in Docker through tokfence",
+		Use:          "launch",
+		Short:        "Launch OpenClaw in Docker through tokfence",
+		SilenceUsage: true,
 	}
 
 	defaultCfg := launcher.DefaultLaunchConfig()
@@ -1452,7 +1455,7 @@ func buildLaunchCmd(configPath string) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		l.Stdout = os.Stderr
+		l.Stdout = launchProgressWriter()
 		return runLaunchStart(ctx, l)
 	}
 
@@ -1466,7 +1469,7 @@ func buildLaunchCmd(configPath string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			l.Stdout = os.Stderr
+			l.Stdout = launchProgressWriter()
 			if err := l.Stop(ctx); err != nil {
 				return err
 			}
@@ -1528,7 +1531,7 @@ func buildLaunchCmd(configPath string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			l.Stdout = os.Stderr
+			l.Stdout = os.Stdout
 			return l.Logs(ctx, follow)
 		},
 	}
@@ -1545,7 +1548,7 @@ func buildLaunchCmd(configPath string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			l.Stdout = os.Stderr
+			l.Stdout = launchProgressWriter()
 			_ = l.Stop(ctx)
 			result, err := l.Launch(ctx)
 			if err != nil {
@@ -1592,6 +1595,13 @@ func buildLaunchCmd(configPath string) *cobra.Command {
 	})
 
 	return launchCmd
+}
+
+func launchProgressWriter() io.Writer {
+	if outputJSON {
+		return io.Discard
+	}
+	return os.Stderr
 }
 
 func runLaunchStart(ctx context.Context, l *launcher.Launcher) error {

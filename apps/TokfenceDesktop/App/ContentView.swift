@@ -57,7 +57,8 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
+            // MARK: - Brand header
             HStack(spacing: TokfenceTheme.spaceSm) {
                 TokfenceLogoMark()
                 Text("Tokfence")
@@ -67,14 +68,58 @@ struct ContentView: View {
                 DaemonStatusMenu(viewModel: viewModel)
             }
             .frame(height: 32)
+            .padding(.bottom, 8)
 
-            Divider()
+            // MARK: - Primary zone: Agents
+            TokfenceSidebarGroupLabel(title: "My Agents")
 
-            ForEach(TokfenceSection.allCases) { section in
+            ForEach(TokfenceSection.primary, id: \.self) { section in
                 TokfenceNavItem(
                     isSelected: viewModel.selectedSection == section,
                     title: section.title,
-                    icon: section.symbol
+                    icon: section.symbol,
+                    badgeText: section == .agents && viewModel.runningAgentsCount > 0 ? "\(viewModel.runningAgentsCount)" : nil,
+                    style: .primary
+                ) {
+                    withAnimation(TokfenceTheme.uiSpring) {
+                        viewModel.selectedSection = section
+                    }
+                }
+            }
+
+            // MARK: - Running agent sub-items
+            if viewModel.runningAgentsCount > 0 && viewModel.selectedSection != .agents {
+                HStack(spacing: 6) {
+                    Text("↳")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(TokfenceTheme.textTertiary)
+                    Text("OpenClaw")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                    Circle()
+                        .fill(TokfenceTheme.healthy)
+                        .frame(width: 6, height: 6)
+                }
+                .padding(.leading, 40)
+                .onTapGesture {
+                    withAnimation(TokfenceTheme.uiSpring) {
+                        viewModel.selectedSection = .agents
+                    }
+                }
+            }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            // MARK: - Secondary zone: Proxy
+            TokfenceSidebarGroupLabel(title: "Proxy")
+
+            ForEach(TokfenceSection.proxy, id: \.self) { section in
+                TokfenceNavItem(
+                    isSelected: viewModel.selectedSection == section,
+                    title: section.title,
+                    icon: section.symbol,
+                    style: .secondary
                 ) {
                     withAnimation(TokfenceTheme.uiSpring) {
                         viewModel.selectedSection = section
@@ -84,6 +129,21 @@ struct ContentView: View {
 
             Spacer(minLength: TokfenceTheme.spaceMd)
 
+            // MARK: - Utility zone: Settings
+            ForEach(TokfenceSection.utility, id: \.self) { section in
+                TokfenceNavItem(
+                    isSelected: viewModel.selectedSection == section,
+                    title: section.title,
+                    icon: section.symbol,
+                    style: .secondary
+                ) {
+                    withAnimation(TokfenceTheme.uiSpring) {
+                        viewModel.selectedSection = section
+                    }
+                }
+            }
+
+            // MARK: - Kill switch badge
             if viewModel.snapshot.killSwitchActive {
                 TokfenceStatusBadge(
                     label: "KILLED",
@@ -92,6 +152,7 @@ struct ContentView: View {
                 )
             }
 
+            // MARK: - Budget footer
             let budget = viewModel.globalDailyBudget
             VStack(alignment: .leading, spacing: 4) {
                 Text("Today \(TokfenceFormatting.usd(cents: budget?.currentSpendCents ?? viewModel.snapshot.todayCostCents)) / \(TokfenceFormatting.usd(cents: budget?.limitCents ?? max(1, viewModel.snapshot.todayCostCents + 1)))")
@@ -113,18 +174,18 @@ struct ContentView: View {
     private var mainContent: some View {
         ZStack {
             switch viewModel.selectedSection {
-            case .dashboard:
-                DashboardSectionView(viewModel: viewModel)
+            case .agents:
+                AgentsSectionView(viewModel: viewModel)
+            case .overview:
+                OverviewSectionView(viewModel: viewModel)
             case .vault:
                 VaultSectionView(viewModel: viewModel)
-            case .logs:
-                LogsSectionView(viewModel: viewModel)
+            case .activity:
+                ActivitySectionView(viewModel: viewModel)
             case .budget:
                 BudgetSectionView(viewModel: viewModel)
             case .providers:
                 ProvidersSectionView(viewModel: viewModel)
-            case .launch:
-                LaunchSectionView(viewModel: viewModel)
             case .settings:
                 SettingsSectionView(viewModel: viewModel)
             }
@@ -350,7 +411,7 @@ private struct RequestListPanel: View {
         }
     }
 }
-private struct DashboardSectionView: View {
+private struct OverviewSectionView: View {
     @ObservedObject var viewModel: TokfenceAppViewModel
     @State private var selectedRequestID: String?
 
@@ -439,7 +500,7 @@ private struct DashboardSectionView: View {
 
     private var dashboardHeader: some View {
         TokfenceSectionHeader(
-            title: "Dashboard",
+            title: "Overview",
             subtitle: "What happened today",
             trailing: AnyView(
                 Button {
@@ -721,14 +782,14 @@ private struct VaultSectionView: View {
     }
 }
 
-private struct LogsSectionView: View {
+private struct ActivitySectionView: View {
     @ObservedObject var viewModel: TokfenceAppViewModel
     @State private var selectedRequestID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             TokfenceSectionHeader(
-                title: "Logs",
+                title: "Activity",
                 subtitle: "Live request stream"
             , trailing: AnyView(
                 HStack(spacing: 8) {
@@ -1220,338 +1281,393 @@ private struct ProvidersSectionView: View {
     }
 }
 
-private struct LaunchSectionView: View {
+// MARK: - Agents Section (Card-per-Agent)
+
+private struct AgentsSectionView: View {
     @ObservedObject var viewModel: TokfenceAppViewModel
 
     @Environment(\.openURL) private var openURL
 
+    // Agent config (will become dynamic with multiple agents)
     @State private var image = "ghcr.io/openclaw/openclaw:latest"
     @State private var containerName = "tokfence-openclaw"
     @State private var gatewayPort = "18789"
     @State private var workspace = "~/openclaw/workspace"
     @State private var noPull = false
     @State private var openDashboard = true
-    @State private var followLogs = false
-    @State private var showAdvanced = false
-    @State private var showLogs = false
+    @State private var showConfig = false
     @State private var selectedRequestID: String? = nil
 
+    private var agent: TokfenceAgentCardModel { viewModel.primaryAgentCard }
     private var daemonReady: Bool { viewModel.snapshot.running }
     private var vaultReady: Bool { !viewModel.snapshot.vaultProviders.isEmpty }
     private var dockerReady: Bool { !viewModel.lastError.localizedCaseInsensitiveContains("docker") }
-    private var prerequisitesMet: Bool { daemonReady && vaultReady && dockerReady }
-    private var isRunning: Bool {
-        let status = viewModel.launchResult.status.lowercased()
-        return !viewModel.launchResult.containerID.isEmpty || status.contains("running")
-    }
-    private var statusText: String {
-        if viewModel.launchBusy { return "Starting secure container..." }
-        if isRunning { return "OpenClaw is running securely" }
-        if !viewModel.launchResult.status.isEmpty { return viewModel.launchResult.status }
-        return "Not running"
-    }
+    private var prerequisitesMet: Bool { vaultReady && dockerReady }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 TokfenceSectionHeader(
-                    title: "Launch",
-                    subtitle: "Start OpenClaw in Docker with zero keys in the container"
+                    title: "Agents",
+                    subtitle: "Your AI tools, running securely"
                 )
 
-                heroArea
+                primaryAgentCard
 
-                prerequisitesRow
+                ForEach(viewModel.placeholderAgentCards) { placeholder in
+                    placeholderCard(placeholder)
+                }
 
-                securityCard
-
-                if isRunning { liveStatusCard }
-
-                advancedSettings
-
-                containerLogs
+                TokfenceCard {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.shield")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(TokfenceTheme.accentPrimary)
+                        Text("Security: API keys remain in your encrypted vault. Agents never see real credentials.")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(TokfenceTheme.textSecondary)
+                    }
+                }
             }
             .padding(.bottom, 8)
-            .animation(TokfenceTheme.uiSpring, value: isRunning)
+            .animation(TokfenceTheme.uiSpring, value: agent.status)
         }
         .onAppear {
             if viewModel.launchResult.status.isEmpty {
                 Task { await viewModel.launchStatus() }
             }
         }
-    }
-
-    // MARK: - Hero
-
-    private var heroArea: some View {
-        TokfenceCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 12) {
-                    Image(systemName: isRunning ? "lock.shield.fill" : "lock.shield")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(isRunning ? TokfenceTheme.healthy : TokfenceTheme.textSecondary)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(isRunning ? "OpenClaw is running securely" : "Launch OpenClaw Securely")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundStyle(TokfenceTheme.textPrimary)
-                        Text("Your API keys stay in the vault. The container never sees real credentials.")
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundStyle(TokfenceTheme.textSecondary)
-                    }
-                    Spacer(minLength: 0)
-
-                    if viewModel.launchBusy {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(TokfenceTheme.healthy)
-                    } else if isRunning {
-                        TokfenceLiveBadge(text: "Running", color: TokfenceTheme.healthy, isActive: true)
-                    }
-                }
-
-                if isRunning {
-                    HStack(spacing: 8) {
-                        if !viewModel.launchResult.gatewayURL.isEmpty {
-                            copyPill(viewModel.launchResult.gatewayURL, label: "Gateway URL copied")
-                                .onTapGesture {
-                                    copyToClipboard(viewModel.launchResult.gatewayURL)
-                                }
-                        }
-                        Spacer(minLength: 0)
-                    }
-
-                    HStack(spacing: 12) {
-                        Button {
-                            if let url = URL(string: viewModel.launchResult.dashboardURL), !viewModel.launchResult.dashboardURL.isEmpty {
-                                openURL(url)
-                            } else {
-                                openOpenClawDashboardFallback()
-                            }
-                        } label: {
-                            Label("Open Dashboard", systemImage: "rectangle.and.cursor.arrow")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(TokfenceTheme.info)
-                        .disabled(viewModel.launchBusy)
-
-                        Button {
-                            Task { await viewModel.launchStop() }
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(TokfenceTheme.danger)
-                        .disabled(viewModel.launchBusy)
-                    }
-                } else if viewModel.launchBusy {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                        Text("Starting secure container...")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(TokfenceTheme.textPrimary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Button {
-                        Task {
-                            await startLaunch()
-                        }
-                    } label: {
-                        Label("Launch OpenClaw", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(TokfenceTheme.healthy)
-                    .frame(minHeight: 44)
-                    .disabled(!prerequisitesMet)
-                    .opacity(prerequisitesMet ? 1 : 0.55)
-
-                    if !prerequisitesMet {
-                        Text(prerequisiteMessage)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(TokfenceTheme.textSecondary)
-                    }
-                }
-            }
-            .animation(TokfenceTheme.uiSpring, value: isRunning)
+        .sheet(isPresented: $showConfig) {
+            agentConfigSheet
         }
     }
 
-    // MARK: - Prerequisites
+    private var primaryAgentCard: some View {
+        TokfenceCard {
+            HStack(alignment: .center, spacing: 12) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(TokfenceTheme.info.opacity(0.15))
+                    .frame(width: 44, height: 44)
+                    .overlay {
+                        Image(systemName: "hammer.fill")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(TokfenceTheme.info)
+                    }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(agent.name)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(TokfenceTheme.textPrimary)
+                    Text(agent.subtitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                }
+
+                Spacer(minLength: 0)
+
+                statusBadge
+
+                Button {
+                    showConfig = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.bordered)
+                .help("Configure OpenClaw")
+            }
+
+            switch agent.status {
+            case .running:
+                runningAgentContent
+            case .starting:
+                startingAgentContent
+            case .error:
+                errorAgentContent
+            case .stopped, .placeholder:
+                stoppedAgentContent
+            }
+        }
+        .overlay(alignment: .leading) {
+            if agent.status == .running || agent.status == .error {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(agent.status == .running ? TokfenceTheme.healthy : TokfenceTheme.danger)
+                    .frame(width: 4)
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private var statusBadge: some View {
+        Group {
+            switch agent.status {
+            case .starting:
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Starting")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(TokfenceTheme.textSecondary)
+                }
+            case .running:
+                TokfenceLiveBadge(text: "Running", color: TokfenceTheme.healthy, isActive: true)
+            case .error:
+                TokfenceLiveBadge(text: "Error", color: TokfenceTheme.danger, isActive: false)
+            case .stopped, .placeholder:
+                Text("Stopped")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(TokfenceTheme.textTertiary)
+            }
+        }
+    }
+
+    private var stoppedAgentContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            prerequisitesRow
+            Button {
+                Task { await startAgent() }
+            } label: {
+                Label("Start Securely", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(TokfenceTheme.healthy)
+            .frame(minHeight: 44)
+            .disabled(!prerequisitesMet || viewModel.launchBusy)
+            .opacity(prerequisitesMet ? 1 : 0.55)
+        }
+    }
+
+    private var startingAgentContent: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .progressViewStyle(.circular)
+            Text("Pulling image and starting container...")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(TokfenceTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
+    }
+
+    private var runningAgentContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !agent.uptimeText.isEmpty || !agent.gatewayURL.isEmpty {
+                HStack(spacing: 12) {
+                    if !agent.uptimeText.isEmpty {
+                        agentInfoPill(icon: "clock", text: agent.uptimeText)
+                    }
+                    if !agent.gatewayURL.isEmpty {
+                        agentInfoPill(icon: "link", text: agent.gatewayURL)
+                            .onTapGesture { copyToClipboard(agent.gatewayURL) }
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    openAgentDashboard()
+                } label: {
+                    Label("Open OpenClaw", systemImage: "rectangle.and.cursor.arrow")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TokfenceTheme.info)
+                .disabled(viewModel.launchBusy)
+
+                Button {
+                    openAgentGateway()
+                } label: {
+                    Label("Go to OpenClaw", systemImage: "arrow.up.right.square")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.launchBusy)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await viewModel.launchStop() }
+                } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(TokfenceTheme.danger)
+                .disabled(viewModel.launchBusy)
+
+                Button {
+                    Task { await viewModel.launchRestart() }
+                } label: {
+                    Label("Restart", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(viewModel.launchBusy)
+            }
+
+            if !agent.providers.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(agent.providers, id: \.self) { provider in
+                        TokfenceProviderBadge(provider: provider, active: true)
+                    }
+                }
+            }
+
+            if !agent.recentActivity.isEmpty {
+                Divider()
+                Text("Recent activity")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textSecondary)
+                RequestListPanel(records: agent.recentActivity, selectedRequestID: $selectedRequestID, compact: true)
+                HStack {
+                    Spacer()
+                    Button("View all activity") {
+                        withAnimation(TokfenceTheme.uiSpring) {
+                            viewModel.selectedSection = .activity
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, weight: .medium))
+                }
+            }
+        }
+    }
+
+    private var errorAgentContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(agent.lastError.isEmpty ? "OpenClaw failed to start." : agent.lastError)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(TokfenceTheme.danger)
+                .textSelection(.enabled)
+
+            HStack(spacing: 10) {
+                Button {
+                    Task { await startAgent() }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TokfenceTheme.warning)
+                .disabled(viewModel.launchBusy)
+
+                Button {
+                    showConfig = true
+                } label: {
+                    Label("Configure", systemImage: "slider.horizontal.3")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
 
     private var prerequisitesRow: some View {
-        TokfenceCard {
-            HStack(spacing: 16) {
-                prereqItem(title: "Daemon", ok: daemonReady) {
-                    Task { await viewModel.refreshAll() }
-                }
-                prereqItem(title: "Vault", ok: vaultReady, hint: "Add key") {
+        HStack(spacing: 12) {
+            prereqDot(title: "Daemon", ok: daemonReady)
+            prereqDot(title: "Vault", ok: vaultReady)
+            prereqDot(title: "Docker", ok: dockerReady)
+            if !vaultReady {
+                Button("Add API key") {
                     withAnimation(TokfenceTheme.uiSpring) {
                         viewModel.selectedSection = .vault
                     }
                 }
-                prereqItem(title: "Docker", ok: dockerReady, hint: dockerReady ? nil : "Check Docker Desktop")
-                Spacer(minLength: 0)
+                .buttonStyle(.link)
+                .font(.system(size: 11, weight: .medium))
             }
         }
+        .padding(10)
+        .background(TokfenceTheme.bgTertiary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
-    private func prereqItem(title: String, ok: Bool, hint: String? = nil, action: (() -> Void)? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TokfenceStatusDot(color: ok ? TokfenceTheme.healthy : TokfenceTheme.danger, label: title)
-            if !ok, let hint {
-                Button(hint) { action?() }
-                    .buttonStyle(.link)
-                    .font(.system(size: 11, weight: .medium))
-            }
-        }
-    }
-
-    private var prerequisiteMessage: String {
-        if !daemonReady { return "Daemon offline. Start it from the sidebar dot." }
-        if !vaultReady { return "Add at least one API key in the Vault tab." }
-        return "Docker not reachable. Open Docker Desktop and retry."
-    }
-
-    // MARK: - Security context
-
-    private var securityCard: some View {
+    private func placeholderCard(_ card: TokfenceAgentCardModel) -> some View {
         TokfenceCard {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "lock.shield")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(TokfenceTheme.accentPrimary)
-                    .frame(width: 28, height: 28)
-                    .padding(6)
-                    .background(
-                        RoundedRectangle(cornerRadius: TokfenceTheme.cardCorner, style: .continuous)
-                            .fill(TokfenceTheme.bgTertiary)
-                    )
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("OpenClaw normally stores API keys in plaintext JSON. CVE-2026-25253 exfiltrated them from 17,500 instances. Tokfence eliminates this: keys live in an encrypted vault, injected at request time.")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    // MARK: - Live status
-
-    private var liveStatusCard: some View {
-        TokfenceCard {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Live status")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(TokfenceTheme.textPrimary)
-                    Spacer()
-                    TokfenceLiveBadge(text: statusText, color: TokfenceTheme.healthy, isActive: isRunning)
-                }
-
-                VStack(spacing: 8) {
-                    TokfenceSectionRow(title: "Container", value: viewModel.launchResult.containerID.isEmpty ? "(not available)" : viewModel.launchResult.containerID)
-                    if !viewModel.launchResult.primaryModel.isEmpty {
-                        TokfenceSectionRow(title: "Primary model", value: viewModel.launchResult.primaryModel)
-                    }
-                    TokfenceSectionRow(title: "Gateway", value: viewModel.launchResult.gatewayURL.isEmpty ? "(pending)" : viewModel.launchResult.gatewayURL)
-                }
-
-                if !viewModel.launchResult.providers.isEmpty {
-                    HStack(spacing: 8) {
-                        Text("Providers")
-                            .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(TokfenceTheme.bgTertiary)
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        Image(systemName: "clock.badge")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(TokfenceTheme.textSecondary)
-                        ForEach(viewModel.launchResult.providers, id: \.self) { provider in
-                            TokfenceProviderBadge(provider: provider, active: true)
-                        }
                     }
-                }
-
-                if viewModel.logs.isEmpty {
-                    Text("No proxy requests yet for this session.")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(card.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(TokfenceTheme.textPrimary)
+                    Text(card.subtitle)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(TokfenceTheme.textSecondary)
-                } else {
-                    RequestListPanel(records: Array(viewModel.logs.prefix(3)), selectedRequestID: $selectedRequestID, compact: true)
                 }
+                Spacer()
+                Text("Coming soon")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(TokfenceTheme.textTertiary)
             }
+            .opacity(0.78)
         }
     }
 
-    // MARK: - Advanced settings
+    // MARK: - Config Sheet
 
-    private var advancedSettings: some View {
-        TokfenceCard {
-            DisclosureGroup(isExpanded: $showAdvanced) {
-                VStack(alignment: .leading, spacing: 10) {
-                    TextField("Docker image", text: $image)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Container name", text: $containerName)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Gateway port", text: $gatewayPort)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Workspace path", text: $workspace)
-                        .textFieldStyle(.roundedBorder)
+    private var agentConfigSheet: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("OpenClaw Configuration")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(TokfenceTheme.textPrimary)
 
-                    Toggle("Skip image pull", isOn: $noPull)
-                        .toggleStyle(.switch)
-                    Toggle("Open dashboard after start", isOn: $openDashboard)
-                        .toggleStyle(.switch)
-                }
-                .padding(.top, 8)
-            } label: {
-                Text("Advanced")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(TokfenceTheme.textPrimary)
+            TextField("Docker image", text: $image)
+                .textFieldStyle(.roundedBorder)
+            TextField("Container name", text: $containerName)
+                .textFieldStyle(.roundedBorder)
+            TextField("Gateway port", text: $gatewayPort)
+                .textFieldStyle(.roundedBorder)
+            TextField("Workspace path", text: $workspace)
+                .textFieldStyle(.roundedBorder)
+            Toggle("Skip image pull", isOn: $noPull)
+                .toggleStyle(.switch)
+            Toggle("Open dashboard after start", isOn: $openDashboard)
+                .toggleStyle(.switch)
+
+            HStack {
+                Spacer()
+                Button("Done") { showConfig = false }
+                    .buttonStyle(.borderedProminent)
+                    .tint(TokfenceTheme.accentPrimary)
             }
         }
-    }
-
-    // MARK: - Logs
-
-    private var containerLogs: some View {
-        TokfenceCard {
-            DisclosureGroup(isExpanded: $showLogs) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Button("Refresh") {
-                            Task { await viewModel.launchLogs(follow: followLogs) }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(viewModel.launchBusy)
-
-                        Toggle("Follow", isOn: $followLogs)
-                            .toggleStyle(.checkbox)
-                        Spacer()
-                    }
-
-                    ScrollView {
-                        Text(viewModel.launchLogsOutput.isEmpty ? "No logs yet." : viewModel.launchLogsOutput)
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                            .foregroundStyle(TokfenceTheme.textPrimary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(maxHeight: 200)
-                }
-                .padding(.top, 8)
-            } label: {
-                Text("Container Logs")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(TokfenceTheme.textPrimary)
-            }
-        }
+        .padding(16)
+            .frame(minWidth: 420)
     }
 
     // MARK: - Helpers
 
-    private func startLaunch() async {
+    private func prereqDot(title: String, ok: Bool) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(ok ? TokfenceTheme.healthy : TokfenceTheme.danger)
+                .frame(width: 7, height: 7)
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(ok ? TokfenceTheme.textSecondary : TokfenceTheme.textPrimary)
+        }
+    }
+
+    private func agentInfoPill(icon: String, text: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .medium))
+            Text(text)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+        }
+        .foregroundStyle(TokfenceTheme.textSecondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(TokfenceTheme.bgTertiary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private func startAgent() async {
         await viewModel.launchStart(
             image: image,
             name: containerName,
@@ -1560,22 +1676,25 @@ private struct LaunchSectionView: View {
             noPull: noPull,
             openDashboard: openDashboard
         )
-        if openDashboard, let dashboard = URL(string: viewModel.launchResult.dashboardURL), !viewModel.launchResult.dashboardURL.isEmpty {
+        if openDashboard,
+           viewModel.launchResult.status.lowercased() == "running",
+           let dashboard = URL(string: viewModel.launchResult.dashboardURL),
+           !viewModel.launchResult.dashboardURL.isEmpty {
             openURL(dashboard)
         }
     }
 
-    private func copyPill(_ text: String, label: String? = nil) -> some View {
-        Text(text.isEmpty ? "(pending)" : text)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .foregroundStyle(TokfenceTheme.textPrimary)
-            .background(
-                RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
-                    .fill(TokfenceTheme.bgTertiary)
-            )
-            .accessibilityLabel(label ?? text)
+    private func openAgentDashboard() {
+        if let url = URL(string: agent.dashboardURL), !agent.dashboardURL.isEmpty {
+            openURL(url)
+            return
+        }
+        openAgentGateway()
+    }
+
+    private func openAgentGateway() {
+        guard let url = URL(string: agent.gatewayURL), !agent.gatewayURL.isEmpty else { return }
+        openURL(url)
     }
 
     private func copyToClipboard(_ value: String) {
@@ -1583,12 +1702,6 @@ private struct LaunchSectionView: View {
         guard !trimmed.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(trimmed, forType: .string)
-    }
-
-    private func openOpenClawDashboardFallback() {
-        if let url = URL(string: viewModel.launchResult.gatewayURL) {
-            openURL(url)
-        }
     }
 }
 

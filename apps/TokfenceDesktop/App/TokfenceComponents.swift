@@ -233,26 +233,54 @@ struct TokfenceEmptyState: View {
     }
 }
 
+struct TokfenceSidebarGroupLabel: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(TokfenceTheme.textTertiary)
+            .tracking(0.8)
+            .padding(.horizontal, 12)
+            .padding(.top, 4)
+    }
+}
+
+enum TokfenceNavItemStyle {
+    case primary
+    case secondary
+}
+
 struct TokfenceNavItem: View {
     let isSelected: Bool
     let title: String
     let icon: String
+    var badgeText: String? = nil
+    var style: TokfenceNavItemStyle = .secondary
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: TokfenceTheme.spaceSm) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: style == .primary ? 15 : 14, weight: .medium))
                     .frame(width: 16)
                     .foregroundStyle(isSelected ? TokfenceTheme.accentPrimary : TokfenceTheme.textTertiary)
                 Text(title)
-                    .font(.system(size: TokfenceTheme.fontBody, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: style == .primary ? 14 : TokfenceTheme.fontBody, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(isSelected ? TokfenceTheme.textPrimary : TokfenceTheme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let badgeText, !badgeText.isEmpty {
+                    Text(badgeText)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(TokfenceTheme.healthy, in: Capsule())
+                }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, style == .primary ? 10 : 8)
             .background(
                 RoundedRectangle(cornerRadius: TokfenceTheme.badgeCorner, style: .continuous)
                     .fill(isSelected ? TokfenceTheme.accentMuted : TokfenceTheme.bgTertiary)
