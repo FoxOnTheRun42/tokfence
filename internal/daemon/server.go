@@ -90,10 +90,19 @@ func NewServer(cfg config.Config, v vault.Vault, store *logger.LogStore, engine 
 		limiter:           NewRateLimiter(),
 		riskMachine:       security.NewRiskMachine(security.RiskDefaults{InitialState: cfg.RiskDefaults.InitialState}),
 		socketPath:        cfg.Daemon.SocketPath,
-		httpClient:        &http.Client{Transport: transport},
+		httpClient:        newUpstreamHTTPClient(transport),
 		logger:            slog.New(slog.NewJSONHandler(os.Stderr, nil)),
 		canary:            canary,
 		maxRequestBodyRaw: maxRequestBodyLimit(),
+	}
+}
+
+func newUpstreamHTTPClient(transport *http.Transport) *http.Client {
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 }
 
@@ -113,6 +122,14 @@ func (s *Server) riskState() security.RiskState {
 		return security.RiskGreen
 	}
 	return s.riskMachine.State()
+}
+
+func (s *Server) riskStateForSession(sessionID string) security.RiskState {
+	sessionID = security.NormalizeSessionID(sessionID)
+	if s.riskMachine == nil {
+		return security.RiskGreen
+	}
+	return s.riskMachine.StateForSession(sessionID)
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -259,6 +276,9 @@ func (s *Server) validateOrIssueCapability(r *http.Request) (security.Capability
 	}
 
 	if header == "" {
+		if s.cfg.Daemon.ImmuneStrictMode {
+			return security.Capability{}, "", errors.New("missing capability header: X-Tokfence-Capability")
+		}
 		// Backward compatibility and local-native clients: synthesize a scoped token per request.
 		// A client token must be explicitly supplied for strict enforcement in strict mode.
 		scope := security.NormalizeScope(s.cfg.Daemon.DefaultScope)
@@ -286,7 +306,8 @@ func (s *Server) validateOrIssueCapability(r *http.Request) (security.Capability
 
 func (s *Server) riskAwareCapabilityAllowed(capability security.Capability, path string, method string, routeState security.RiskState) bool {
 	scope := security.NormalizeScope(capability.Scope)
-	effectiveState := security.MaxRisk(routeState, security.ParseRiskStateMust(capability.RiskState))
+	sessionState := s.riskStateForSession(capability.SessionID)
+	effectiveState := security.MaxRisk(routeState, sessionState, security.ParseRiskStateMust(capability.RiskState))
 	if effectiveState == security.RiskRed {
 		return false
 	}
@@ -294,16 +315,19 @@ func (s *Server) riskAwareCapabilityAllowed(capability security.Capability, path
 }
 
 func (s *Server) applySensorSignals(ctx context.Context, capability security.Capability, method, path string, body []byte) {
-	if security.DetectDisallowedEndpoint(path) {
-		s.riskMachine.Escalate(security.RiskEventEndpoint)
-	}
 	_ = ctx
-	_ = capability
+	sessionID := security.NormalizeSessionID(capability.SessionID)
+	if security.DetectDisallowedEndpoint(path) {
+		s.riskMachine.EscalateForSession(sessionID, security.RiskEventEndpoint)
+		return
+	}
 	if security.DetectSecretReference(string(body)) {
-		s.riskMachine.Escalate(security.RiskEventSecretLeak)
+		s.riskMachine.EscalateForSession(sessionID, security.RiskEventSecretLeak)
+		return
 	}
 	if security.DetectSystemOverride(string(body)) {
-		s.riskMachine.Escalate(security.RiskEventOverride)
+		s.riskMachine.EscalateForSession(sessionID, security.RiskEventOverride)
+		return
 	}
 
 	_ = capability
@@ -453,7 +477,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applySensorSignals(ctx, capability, r.Method, route.Path, requestBody)
-	if state := s.riskMachine.State(); state == security.RiskRed {
+	if state := s.riskStateForSession(capability.SessionID); state == security.RiskRed {
 		writeJSONError(w, http.StatusForbidden, errorPayload{
 			Type:      "tokfence_risk_restricted",
 			Message:   "session blocked due to risk escalation",
@@ -572,7 +596,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		usage = logger.ExtractUsageFromResponse(route.Provider, responseCapture.Bytes())
 	}
 	if s.checkCanaryForResponse(responseCapture.Bytes()) {
-		s.riskMachine.Escalate(security.RiskEventCanaryLeak)
+		s.riskMachine.EscalateForSession(capability.SessionID, security.RiskEventCanaryLeak)
 	}
 
 	errorType := ""

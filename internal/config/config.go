@@ -27,6 +27,7 @@ type DaemonConfig struct {
 	Host             string `toml:"host"`
 	SocketPath       string `toml:"socket_path"`
 	ImmuneEnabled    bool   `toml:"immune_enabled"`
+	ImmuneStrictMode bool   `toml:"immune_strict_mode"`
 	DefaultClientID  string `toml:"default_client_id"`
 	DefaultSessionID string `toml:"default_session_id"`
 	DefaultScope     string `toml:"default_capability_scope"`
@@ -91,6 +92,7 @@ func Default() Config {
 			Host:             DefaultHost,
 			SocketPath:       DefaultSocketPath,
 			ImmuneEnabled:    true,
+			ImmuneStrictMode: false,
 			DefaultClientID:  "tokfence-cli",
 			DefaultSessionID: "default",
 			DefaultScope:     "proxy",
@@ -195,6 +197,9 @@ func Load(path string) (Config, error) {
 	}
 	if loaded.Daemon.ImmuneEnabled != cfg.Daemon.ImmuneEnabled {
 		cfg.Daemon.ImmuneEnabled = loaded.Daemon.ImmuneEnabled
+	}
+	if loaded.Daemon.ImmuneStrictMode != cfg.Daemon.ImmuneStrictMode {
+		cfg.Daemon.ImmuneStrictMode = loaded.Daemon.ImmuneStrictMode
 	}
 	if loaded.RiskDefaults.InitialState != "" {
 		state, err := security.ParseRiskState(loaded.RiskDefaults.InitialState)

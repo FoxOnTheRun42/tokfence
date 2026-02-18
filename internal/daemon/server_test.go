@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/FoxOnTheRun42/tokfence/internal/budget"
 	"github.com/FoxOnTheRun42/tokfence/internal/config"
 	"github.com/FoxOnTheRun42/tokfence/internal/logger"
+	"github.com/FoxOnTheRun42/tokfence/internal/security"
 	"github.com/FoxOnTheRun42/tokfence/internal/vault"
 )
 
@@ -40,12 +42,20 @@ func (v *testVault) Delete(_ context.Context, provider string) error {
 }
 func (v *testVault) List(_ context.Context) ([]string, error) { return nil, nil }
 
-func newTestServer(t *testing.T, provider string, upstream http.HandlerFunc) (*Server, *logger.LogStore, func()) {
+func newTestServerWithConfig(
+	t *testing.T,
+	provider string,
+	upstream http.HandlerFunc,
+	mutateConfig func(*config.Config),
+) (*Server, *logger.LogStore, func()) {
 	t.Helper()
 	up := httptest.NewServer(upstream)
 	cfg := config.Default()
 	cfg.Providers = map[string]config.ProviderConfig{
 		provider: {Upstream: up.URL},
+	}
+	if mutateConfig != nil {
+		mutateConfig(&cfg)
 	}
 	store, err := logger.Open(filepath.Join(t.TempDir(), "tokfence.db"))
 	if err != nil {
@@ -58,6 +68,25 @@ func newTestServer(t *testing.T, provider string, upstream http.HandlerFunc) (*S
 		store.Close()
 	}
 	return srv, store, cleanup
+}
+
+func newTestServer(t *testing.T, provider string, upstream http.HandlerFunc) (*Server, *logger.LogStore, func()) {
+	return newTestServerWithConfig(t, provider, upstream, nil)
+}
+
+func mustIssueCapability(t *testing.T, cfg config.Config, sessionID string) string {
+	t.Helper()
+	token, err := security.MintCapability(
+		cfg.Daemon.DefaultScope,
+		cfg.Daemon.DefaultClientID,
+		sessionID,
+		string(security.RiskGreen),
+		12*time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("mint capability: %v", err)
+	}
+	return token
 }
 
 func TestHandleProxyForwardsInjectsAuthAndLogs(t *testing.T) {
@@ -171,8 +200,8 @@ func TestHandleProxyStripsCommonAuthHeaders(t *testing.T) {
 	if gotGoog != "" {
 		t.Fatalf("upstream x-goog-api-key should be stripped")
 	}
-	if gotCustom != "" {
-		t.Fatalf("upstream X-Custom-Auth with bearer value should be stripped")
+	if gotCustom != "contains bearer token" {
+		t.Fatalf("upstream X-Custom-Auth should remain, got %q", gotCustom)
 	}
 }
 
@@ -404,5 +433,171 @@ func TestFollowLogFiltersAndLatestEntry(t *testing.T) {
 	}
 	if statsRows[0].RequestCount != 1 {
 		t.Fatalf("request count = %d, want 1", statsRows[0].RequestCount)
+	}
+}
+
+func TestProxyRejectsMissingCapabilityInStrictMode(t *testing.T) {
+	srv, _, cleanup := newTestServerWithConfig(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","usage":{"prompt_tokens":10,"completion_tokens":1}}`))
+	}, func(cfg *config.Config) {
+		cfg.Daemon.ImmuneStrictMode = true
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[]}`))
+	rec := httptest.NewRecorder()
+	srv.handleProxy(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("strict mode missing capability status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("error response parse: %v", err)
+	}
+	errObj, ok := payload["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing error object in response: %v", payload)
+	}
+	if errObj["type"] != "tokfence_capability_rejected" {
+		t.Fatalf("error.type = %v, want tokfence_capability_rejected", errObj["type"])
+	}
+
+	capability := mustIssueCapability(t, srv.cfg, "default")
+	req = httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[]}`))
+	req.Header.Set(capabilityHeaderName, capability)
+	rec = httptest.NewRecorder()
+	srv.handleProxy(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("strict mode with capability status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestProxyAllowsMissingCapabilityWhenImmuneFenceDisabled(t *testing.T) {
+	srv, _, cleanup := newTestServerWithConfig(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","usage":{"prompt_tokens":10,"completion_tokens":1}}`))
+	}, func(cfg *config.Config) {
+		cfg.Daemon.ImmuneEnabled = false
+	})
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[]}`))
+	rec := httptest.NewRecorder()
+	srv.handleProxy(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("legacy mode missing capability status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestHandleProxyRedirectDoesNotFollowOrLeakAuthToExternalHost(t *testing.T) {
+	var upstreamHit int32
+	downstreamWasHit := func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamHit, 1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"error":"redirect target should not be hit"}`)
+	}
+
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downstreamWasHit(w, r)
+	}))
+	defer target.Close()
+	defer atomic.StoreInt32(&upstreamHit, 0)
+
+	srv, _, cleanup := newTestServerWithConfig(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/attacker")
+		w.WriteHeader(http.StatusFound)
+	}, nil)
+	defer cleanup()
+
+	capability := mustIssueCapability(t, srv.cfg, "default")
+	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[]}`))
+	req.Header.Set(capabilityHeaderName, capability)
+	req.Header.Set("Authorization", "Bearer should-not-be-forwarded")
+	rec := httptest.NewRecorder()
+	srv.handleProxy(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("redirect status = %d, want %d", rec.Code, http.StatusFound)
+	}
+	if atomic.LoadInt32(&upstreamHit) != 0 {
+		t.Fatalf("external redirect target was hit %d time(s)", atomic.LoadInt32(&upstreamHit))
+	}
+}
+
+func TestHandleProxySessionRiskIsolation(t *testing.T) {
+	srv, _, cleanup := newTestServer(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"1","usage":{"prompt_tokens":10,"completion_tokens":1}}`))
+	})
+	defer cleanup()
+
+	tokenSessionA := mustIssueCapability(t, srv.cfg, "session-a")
+	tokenSessionB := mustIssueCapability(t, srv.cfg, "session-b")
+
+	reqA := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"OPENAI_API_KEY":"sk-ant-1234567890123456"}`))
+	reqA.Header.Set(capabilityHeaderName, tokenSessionA)
+	recA := httptest.NewRecorder()
+	srv.handleProxy(recA, reqA)
+	if recA.Code != http.StatusOK {
+		t.Fatalf("session A first request status=%d, want=%d", recA.Code, http.StatusOK)
+	}
+	if srv.riskStateForSession("session-a") != security.RiskYellow {
+		t.Fatalf("session A risk state = %s, want %s", srv.riskStateForSession("session-a"), security.RiskYellow)
+	}
+
+	reqB := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini"}`))
+	reqB.Header.Set(capabilityHeaderName, tokenSessionB)
+	recB := httptest.NewRecorder()
+	srv.handleProxy(recB, reqB)
+	if recB.Code != http.StatusOK {
+		t.Fatalf("session B request status=%d, want=%d", recB.Code, http.StatusOK)
+	}
+	if srv.riskStateForSession("session-b") != security.RiskGreen {
+		t.Fatalf("session B risk state = %s, want %s", srv.riskStateForSession("session-b"), security.RiskGreen)
+	}
+
+	reqA2 := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","stream":false}`))
+	reqA2.Header.Set(capabilityHeaderName, tokenSessionA)
+	recA2 := httptest.NewRecorder()
+	srv.handleProxy(recA2, reqA2)
+	if recA2.Code != http.StatusForbidden {
+		t.Fatalf("session A second request status=%d, want %d", recA2.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandleProxyCanaryResponseEscalatesSessionToRed(t *testing.T) {
+	const canaryMarker = "tokfence-canary-test-marker-2026"
+	srv, _, cleanup := newTestServerWithConfig(t, "openai", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"1","usage":{"prompt_tokens":10,"completion_tokens":1},"canary":"`)
+		_, _ = io.WriteString(w, canaryMarker)
+		_, _ = io.WriteString(w, `"}`)
+	}, func(cfg *config.Config) {
+		// Use a stable marker so we can deterministically assert canary detection.
+		cfg.Daemon.ImmuneEnabled = true
+	})
+	defer cleanup()
+	srv.canary = canaryMarker
+
+	token := mustIssueCapability(t, srv.cfg, "default")
+	first := httptest.NewRecorder()
+	reqFirst := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini"}`))
+	reqFirst.Header.Set(capabilityHeaderName, token)
+
+	srv.handleProxy(first, reqFirst)
+	if first.Code != http.StatusOK {
+		t.Fatalf("first request status=%d, want %d; body=%s", first.Code, http.StatusOK, first.Body.String())
+	}
+	if got := srv.riskStateForSession("default"); got != security.RiskRed {
+		t.Fatalf("session risk state = %s, want %s", got, security.RiskRed)
+	}
+
+	second := httptest.NewRecorder()
+	reqSecond := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini"}`))
+	reqSecond.Header.Set(capabilityHeaderName, token)
+	srv.handleProxy(second, reqSecond)
+	if second.Code != http.StatusForbidden {
+		t.Fatalf("second request status=%d, want %d", second.Code, http.StatusForbidden)
 	}
 }

@@ -6,35 +6,21 @@ import (
 	"strings"
 )
 
+var blockedAuthHeaders = map[string]struct{}{
+	"authorization":       {},
+	"proxy-authorization": {},
+	"x-api-key":           {},
+	"api-key":             {},
+	"token":               {},
+	"x-goog-api-key":      {},
+	"bearer":              {},
+}
+
 func StripIncomingAuth(headers http.Header) {
-	blocked := []string{
-		"authorization",
-		"proxy-authorization",
-		"x-api-key",
-		"api-key",
-		"token",
-		"x-goog-api-key",
-		"bearer",
-	}
-
 	for key := range headers {
-		lower := strings.ToLower(key)
-		for _, candidate := range blocked {
-			if strings.Contains(lower, candidate) {
-				headers.Del(key)
-				break
-			}
-		}
-	}
-
-	for key := range headers {
-		for _, value := range headers[key] {
-			for _, candidate := range blocked {
-				if strings.Contains(strings.ToLower(value), candidate) {
-					headers.Del(key)
-					break
-				}
-			}
+		normalized := strings.ToLower(strings.TrimSpace(http.CanonicalHeaderKey(key)))
+		if _, blocked := blockedAuthHeaders[normalized]; blocked {
+			headers.Del(key)
 		}
 	}
 }

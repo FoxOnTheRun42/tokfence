@@ -45,6 +45,12 @@ type RiskMachine struct {
 	mu         sync.RWMutex
 	state      RiskState
 	seenEvents []RiskEvent
+	sessions   map[string]RiskMachineSession
+}
+
+type RiskMachineSession struct {
+	state      RiskState
+	seenEvents []RiskEvent
 }
 
 func NewRiskMachine(defaults RiskDefaults) *RiskMachine {
@@ -52,6 +58,7 @@ func NewRiskMachine(defaults RiskDefaults) *RiskMachine {
 	return &RiskMachine{
 		state:      state,
 		seenEvents: []RiskEvent{},
+		sessions:   map[string]RiskMachineSession{},
 	}
 }
 
@@ -59,6 +66,16 @@ func (r *RiskMachine) State() RiskState {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.state
+}
+
+func (r *RiskMachine) StateForSession(sessionID string) RiskState {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	sessionState, ok := r.sessions[normalizeSessionID(sessionID)]
+	if !ok {
+		return r.state
+	}
+	return sessionState.state
 }
 
 func (r *RiskMachine) Events() []RiskEvent {
@@ -69,31 +86,46 @@ func (r *RiskMachine) Events() []RiskEvent {
 	return copyEvents
 }
 
+func (r *RiskMachine) EventsForSession(sessionID string) []RiskEvent {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	sessionState, ok := r.sessions[normalizeSessionID(sessionID)]
+	if !ok {
+		return nil
+	}
+	copyEvents := make([]RiskEvent, len(sessionState.seenEvents))
+	copy(copyEvents, sessionState.seenEvents)
+	return copyEvents
+}
+
 func (r *RiskMachine) Escalate(evt RiskEvent) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	r.seenEvents = append(r.seenEvents, evt)
-	next := r.state
-	switch evt {
-	case RiskEventSecretLeak:
-		if next == RiskGreen {
-			next = RiskYellow
-		}
-	case RiskEventOverride:
-		if next == RiskGreen || next == RiskYellow {
-			next = RiskOrange
-		}
-	case RiskEventEndpoint:
-		if next == RiskGreen || next == RiskYellow {
-			next = RiskOrange
-		}
-	case RiskEventCanaryLeak:
-		next = RiskRed
-	default:
+	next := escalateState(r.state, evt)
+	if next == r.state {
 		return
 	}
 	r.state = next
+}
+
+func (r *RiskMachine) EscalateForSession(sessionID string, evt RiskEvent) {
+	sessionID = normalizeSessionID(sessionID)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	session := r.sessions[sessionID]
+	session.state = r.state
+	session.seenEvents = append(session.seenEvents, evt)
+
+	session.state = escalateState(session.state, evt)
+	r.sessions[sessionID] = session
+}
+
+func (r *RiskMachine) IsRequestAllowedForSession(sessionID string, capabilityScope, method, path string) bool {
+	sessionState := r.StateForSession(sessionID)
+	return r.IsRequestAllowedForState(sessionState, capabilityScope, method, path)
 }
 
 func (r *RiskMachine) IsRequestAllowed(capabilityScope, method, path string) bool {
@@ -225,6 +257,41 @@ func MaxRisk(states ...RiskState) RiskState {
 		}
 	}
 	return max
+}
+
+func normalizeSessionID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "default"
+	}
+	return sessionID
+}
+
+func NormalizeSessionID(sessionID string) string {
+	return normalizeSessionID(sessionID)
+}
+
+func escalateState(current RiskState, evt RiskEvent) RiskState {
+	next := current
+	switch evt {
+	case RiskEventSecretLeak:
+		if next == RiskGreen {
+			return RiskYellow
+		}
+	case RiskEventOverride:
+		if next == RiskGreen || next == RiskYellow {
+			return RiskOrange
+		}
+	case RiskEventEndpoint:
+		if next == RiskGreen || next == RiskYellow {
+			return RiskOrange
+		}
+	case RiskEventCanaryLeak:
+		return RiskRed
+	default:
+		return next
+	}
+	return next
 }
 
 func TopNEvents(events []RiskEvent, max int) []RiskEvent {

@@ -77,6 +77,7 @@ func main() {
 func newStartCommand() *cobra.Command {
 	var daemonize bool
 	var daemonNonce string
+	var strictImmune bool
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Start tokfence daemon",
@@ -84,6 +85,9 @@ func newStartCommand() *cobra.Command {
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return err
+			}
+			if strictImmune {
+				cfg.Daemon.ImmuneStrictMode = true
 			}
 			if daemonNonce == "" {
 				daemonNonce = os.Getenv(daemonNonceEnv)
@@ -96,6 +100,7 @@ func newStartCommand() *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&daemonize, "daemon", "d", false, "run in background")
 	cmd.Flags().StringVar(&daemonNonce, "tokfence-daemon-nonce", "", "internal daemon nonce")
+	cmd.Flags().BoolVar(&strictImmune, "immune-strict", false, "reject requests without a valid capability token")
 	if flag := cmd.Flags().Lookup("tokfence-daemon-nonce"); flag != nil {
 		flag.Hidden = true
 	}
